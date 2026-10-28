@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=6";
-import * as cloud from "./cloud.js?v=6";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=7";
+import * as cloud from "./cloud.js?v=7";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -132,19 +132,20 @@ function deleteSave() {
 const summary = (st) => `${st.party[0].name} · Act ${st.act}, Day ${Math.min(st.day + 1, 7)} · Level ${st.level}`;
 
 /* ---------- Account sync ---------- */
-let unwatch = () => {};
 let syncKey = false;
+let household = [];
 
 async function onSignedIn() {
   let remote;
   try { remote = await cloud.loadCloud(); } catch { toast(`<span class="n">Couldn't reach your saved campaign. Playing on this device for now.</span>`); return; }
   syncKey = Boolean(remote?.apiKey);
   if (remote?.apiKey && !hasKey()) setKey(remote.apiKey);
+  household = remote?.members || [];
   const local = S || loadSave();
   const cloudState = remote?.state;
   if (cloudState && local && cloudState.savedAt !== local.savedAt) {
     await new Promise((resolve) => modal(`<div class="dialog"><h3>Two campaigns found</h3>
-      <p>Which one should this account keep? The other is replaced on every device.</p>
+      <p>Which one should this account keep? The other is replaced on every device${household.length > 1 ? " and for everyone in your household" : ""}.</p>
       <div class="choices">
         <button class="choice" data-pick="cloud"><b>Your account's campaign</b><small>${esc(summary(cloudState))}</small></button>
         <button class="choice" data-pick="local"><b>This device's campaign</b><small>${esc(summary(local))}</small></button>
@@ -160,17 +161,98 @@ async function onSignedIn() {
     S = local; save(); cloud.flush();
   }
   if (tidyPack(S)) { save(); cloud.flush(); }
-  unwatch();
-  unwatch = cloud.watchCloud(applyRemote);
+  await cloud.flush();
+  watch();
   refreshScreen();
 }
 
+function watch() {
+  cloud.watchCloud(applyRemote, (members) => {
+    if (members === null) {
+      cloud.stopWatching();
+      household = [];
+      toast("You're no longer in that household. Your campaign stays on this device.");
+      return;
+    }
+    household = members;
+  });
+}
+
 function applyRemote(remote) {
-  if (remote.apiKey && remote.apiKey !== getKey()) setKey(remote.apiKey);
   if (!remote.state || (S && remote.savedAt <= (S.savedAt || 0))) return;
   S = remote.state;
   if (tidyPack(S)) save(); else storeLocal(S);
-  if (!modalOpen) { toast("Synced from your other device"); refreshScreen(); }
+  if (!modalOpen) { toast(household.length > 1 ? "Your household updated the campaign" : "Synced from your other device"); refreshScreen(); }
+}
+
+/* Household: share one campaign between several accounts. */
+function openHousehold() {
+  const others = household.filter((m) => !m.me);
+  const owner = household.find((m) => m.me)?.owner;
+  modal(`<div class="dialog left"><h3>Household</h3>
+    <p>Everyone in a household plays the same campaign from their own Google account: same plan, shopping list and Pack.</p>
+    ${household.length ? `<div class="raters">${household.map((m) => `
+      <div class="rater"><span>${esc(m.name)}${m.me ? " (you)" : ""}${m.owner ? " · started it" : ""}</span>
+        ${owner && !m.me ? `<button class="btn danger" data-rm="${m.uid}">Remove</button>` : ""}</div>`).join("")}</div>` : ""}
+    <div class="field"><span>Invite someone</span>
+      <div id="hh-invite"><button class="btn" id="hh-make">Make an invite code</button></div>
+      <small class="hint">They sign in on their own phone, open Settings → Household and enter the code.</small>
+    </div>
+    <form class="field" id="hh-join" style="margin-top:14px"><span>Join a household</span>
+      <div class="keyrow"><input id="hh-code" maxlength="12" placeholder="Invite code" autocomplete="off" autocapitalize="characters"><button class="btn">Join</button></div>
+      <small class="hint">Joining switches this account to their campaign. Your current one is left behind.</small>
+    </form>
+    <div class="row" style="margin-top:16px">${others.length ? `<button class="btn danger" id="hh-leave">Leave household</button>` : ""}<button class="btn primary" id="hh-done">Done</button></div></div>`,
+    (root) => {
+      root.querySelector("#hh-done").onclick = closeModal;
+      root.querySelector("#hh-make").onclick = async () => {
+        try {
+          if (S) { save(); await cloud.flush(); }
+          const { code, expires } = await cloud.createInvite();
+          root.querySelector("#hh-invite").innerHTML = `<div class="invite-code">${code.slice(0, 4)} ${code.slice(4)}</div>
+            <div class="row" style="justify-content:flex-start"><button class="btn" id="hh-copy">Copy code</button><small class="hint">Works until ${new Date(expires).toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" })}.</small></div>`;
+          root.querySelector("#hh-copy").onclick = async () => {
+            try { await navigator.clipboard.writeText(code); toast("Code copied"); } catch { toast("Copy didn't work. Read the code out instead."); }
+          };
+        } catch (err) { toast(`<span class="n">${esc(err.message || "Couldn't make a code.")}</span>`); }
+      };
+      root.querySelector("#hh-join").onsubmit = async (e) => {
+        e.preventDefault();
+        const code = root.querySelector("#hh-code").value;
+        if (!code.trim()) return;
+        try {
+          await cloud.flush();
+          const joined = await cloud.joinWithCode(code);
+          closeModal();
+          S = joined.state;
+          household = joined.members;
+          if (S) { tidyPack(S); storeLocal(S); } else deleteLocalOnly();
+          watch();
+          toast(`You've joined the household`);
+          if (S) { if (S.planning) openCouncil(); else if (S.day >= 7) showActEnd(); else enterGame(); } else renderMenu();
+        } catch (err) { toast(`<span class="n">${esc(err.message || "Couldn't join. Check the code.")}</span>`); }
+      };
+      root.querySelector("#hh-leave")?.addEventListener("click", async (e) => {
+        if (!e.target.dataset.armed) { e.target.dataset.armed = "1"; e.target.textContent = "Tap again to leave"; return; }
+        try {
+          await cloud.leaveHousehold();
+          household = [];
+          closeModal();
+          toast("You've left. You keep a copy of the campaign on this device.");
+          if (S) save();
+          renderMenu();
+        } catch { toast(`<span class="n">Couldn't leave right now. Try again.</span>`); }
+      });
+      root.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => {
+        if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Tap to confirm"; return; }
+        try { await cloud.removeMember(b.dataset.rm); b.closest(".rater").remove(); toast("Removed from the household"); }
+        catch { toast(`<span class="n">Couldn't remove them right now.</span>`); }
+      });
+    });
+}
+
+function deleteLocalOnly() {
+  try { localStorage.removeItem(SAVE_KEY); } catch {}
 }
 
 // Redraw whichever screen is showing after the campaign changes underneath it.
@@ -263,7 +345,8 @@ function renderMenu() {
 $("#menu-account").onclick = async () => {
   if (cloud.user) {
     await cloud.flush();
-    unwatch(); unwatch = () => {};
+    cloud.stopWatching();
+    household = [];
     await cloud.signOut();
     toast("Signed out. Your campaign stays on this device too.");
     renderMenu();
@@ -305,8 +388,12 @@ function openSettings() {
       ${cloud.user ? `<label class="class-card" style="cursor:pointer"><input type="checkbox" id="set-sync-key" ${syncKey ? "checked" : ""}>
         <span><b style="font-size:17px">Keep the key in my account</b><small>Your other signed-in devices get it automatically. Only you can read it.</small></span></label>` : ""}
       ${S ? `<label class="field"><span>Weekly budget</span><div class="money"><input id="set-budget" type="number" min="10" max="2000" step="5" value="${budget}"><b>gold</b></div></label>` : ""}
+      ${cloud.user ? `<div class="field"><span>Household</span>
+        <div class="row" style="justify-content:flex-start"><button class="btn" id="set-household">${household.length > 1 ? `${household.length} people · Manage` : "Invite or join"}</button></div>
+      </div>` : ""}
       <div class="field"><span>Campaign</span>
         <div class="row" style="justify-content:flex-start"><button class="btn danger" id="set-delete" ${S || loadSave() ? "" : "disabled"}>Delete campaign</button></div>
+        ${household.length > 1 ? `<small class="hint">This deletes it for everyone in your household.</small>` : ""}
       </div>
     </div>
     <div class="row" style="margin-top:18px"><button class="btn primary" id="set-done">Save</button></div></div>`,
@@ -316,6 +403,7 @@ function openSettings() {
         k.type = k.type === "password" ? "text" : "password";
         e.target.textContent = k.type === "password" ? "Show" : "Hide";
       };
+      root.querySelector("#set-household")?.addEventListener("click", () => { closeModal(); openHousehold(); });
       const del = root.querySelector("#set-delete");
       del.onclick = () => {
         if (del.dataset.armed) { deleteSave(); closeModal(); toast(cloud.user ? "Campaign deleted from every device" : "Campaign deleted"); renderMenu(); return; }
@@ -342,6 +430,10 @@ function openSettings() {
 
 /* ---------- Character creation ---------- */
 function renderCreate() {
+  $("#create-sync").hidden = !!cloud.user;
+  $("#create-signin").onclick = async () => {
+    try { await cloud.signIn(); } catch (err) { toast(`<span class="n">${esc(err.message)}</span>`); }
+  };
   $("#class-list").innerHTML = Object.entries(CLASSES).map(([id, c], i) => `
     <label class="class-card"><input type="radio" name="cls" value="${id}" ${i === 1 ? "checked" : ""}>
       <span><b>${c.name}</b><small>${c.blurb}</small></span></label>`).join("");
@@ -630,21 +722,34 @@ function completeQuest(i, bonus = 0) {
   const q = S.quests[i];
   q.status = "done";
   S.stats.cooked += 1;
-  for (const name of q.uses || []) {
-    const p = S.pack.find((x) => sameItem(x.name, name));
-    if (p) { p.qty -= 1; }
-  }
-  S.pack = S.pack.filter((p) => p.qty > 0);
   logLine(`Cooked ${q.name}.`);
   gainXP(Math.max(5, 40 + bonus + (S.cls === "paladin" ? 10 : 0)), "Quest complete");
   debrief(q);
 }
 
 /* After-dinner debrief. Anyone left unrated wasn't at dinner, so their approval doesn't move. */
+// Pack items this dinner probably drew on: what Claude planned to use, plus anything in its recipe.
+// Planned items start at 1 used; recipe-only items at 0, since a bag of rice outlasts one dinner.
+function packUsage(q) {
+  const wanted = [...(q.uses || []), ...(q.recipe?.ingredients || []).map((g) => g.name)];
+  const rows = [];
+  for (const p of S.pack) {
+    if (p.leftover || !wanted.some((w) => sameItem(w, p.name))) continue;
+    const planned = (q.uses || []).some((w) => sameItem(w, p.name));
+    rows.push({ p, used: planned ? 1 : 0 });
+  }
+  return rows;
+}
+function applyUsage(rows) {
+  for (const r of rows) r.p.qty -= r.used;
+  S.pack = S.pack.filter((p) => p.qty > 0);
+}
+
 function debrief(q) {
   const ratings = {};
   let again = !!bookEntry(q.name);
   let leftovers = S.perks.includes("Skill: Batch Cook") ? 2 : 0;
+  const usage = packUsage(q);
   modal(`<div class="dialog left debrief"><h3>How was ${esc(q.name)}?</h3>
     <p>Rate it for each person who ate. Leave someone blank if they weren't there.</p>
     <div class="raters">${S.party.map((m, k) => `
@@ -658,6 +763,13 @@ function debrief(q) {
     <div class="field"><span>Leftovers</span>
       <div class="seg" role="group" aria-label="Leftover portions">${[0, 1, 2, 3].map((n) => `<button class="seg-btn" data-left="${n}" aria-pressed="${n === leftovers}">${n === 0 ? "None" : n === 3 ? "3+" : n}</button>`).join("")}</div>
     </div>
+    ${usage.length ? `<div class="field" style="margin-top:14px"><span>Used up from your Pack</span>
+      <div class="raters">${usage.map((u, k) => `
+        <div class="rater"><span>${esc(u.p.name)} <small class="hint">of ${u.p.qty}</small></span>
+          <div class="stepper"><button class="thumb" data-use="${k}" data-d="-1" aria-label="One fewer ${esc(u.p.name)}">−</button><b id="use-${k}">${u.used}</b><button class="thumb" data-use="${k}" data-d="1" aria-label="One more ${esc(u.p.name)}">+</button></div>
+        </div>`).join("")}</div>
+      <small class="hint">Count whole items finished, like a tin or a bag. Leave it at 0 if there's still some left.</small>
+    </div>` : ""}
     <div class="row" style="margin-top:16px"><button class="btn" id="db-skip">Skip</button><button class="btn primary" id="db-save">Record it</button></div></div>`,
     (root) => {
       root.querySelectorAll("[data-rate]").forEach((b) => b.onclick = () => {
@@ -670,9 +782,15 @@ function debrief(q) {
         root.querySelectorAll("[data-left]").forEach((x) => x.setAttribute("aria-pressed", +x.dataset.left === leftovers));
       });
       root.querySelector("#db-again").onchange = (e) => { again = e.target.checked; };
-      root.querySelector("#db-skip").onclick = () => { closeModal(); render(); };
+      root.querySelectorAll("[data-use]").forEach((b) => b.onclick = () => {
+        const u = usage[+b.dataset.use];
+        u.used = Math.min(u.p.qty, Math.max(0, u.used + +b.dataset.d));
+        root.querySelector(`#use-${b.dataset.use}`).textContent = u.used;
+      });
+      root.querySelector("#db-skip").onclick = () => { closeModal(); applyUsage(usage); render(); };
       root.querySelector("#db-save").onclick = () => {
         closeModal();
+        applyUsage(usage);
         recordDebrief(q, ratings, again, leftovers);
         render();
       };
@@ -860,6 +978,7 @@ async function startNextAct(plan) {
   const lastWeek = S.quests.filter((q) => q.status !== "out").map((q) => q.name);
   const bonus = (S.spent <= S.budget ? 50 : 0) + (S.stats.wasted === 0 ? 30 : 0);
   S.recent = [...lastWeek, ...S.recent].slice(0, 21);
+  S.acts = [...(S.acts || []), { act: S.act, start: S.actStart, spent: S.spent, budget: S.budget, cooked: S.stats.cooked, wasted: S.stats.wasted }].slice(-26);
   S.act += 1; S.actStart = todayISO(); S.day = 0; S.spent = 0; S.suppliesBonus = false;
   S.stats = { cooked: 0, skipped: 0, wasted: 0, actXP: 0 };
   S.pendingBonus = bonus;
@@ -900,18 +1019,44 @@ function councilDays() {
   return S.council;
 }
 
+// Mid-week: send the remaining nights back to the war council. Kept dinners keep their shopping and recipe.
+function startReplan() {
+  const tonight = S.quests[S.day];
+  const from = tonight && tonight.status === "planned" ? S.day : S.day + 1;
+  if (from >= 7) { toast("There are no nights left to re-plan this act."); return; }
+  S.council = {
+    replanFrom: from, notes: "", kitchen: "", reviewed: false,
+    days: S.quests.map((q, i) => i < from ? { locked: true }
+      : q.status === "out" ? { out: true, request: "", busy: false }
+      : q.kind === "leftovers" ? { leftovers: true, request: "", busy: false }
+      : { request: q.name, keep: q.id, keepName: q.name, busy: false }),
+  };
+  S.planning = true;
+  save();
+  openCouncil();
+}
+const isReplan = () => S.council?.replanFrom != null;
+const keptQuest = (d) => (!d.out && !d.leftovers && d.keep && d.request === d.keepName) ? S.quests.find((q) => q.id === d.keep) : null;
+
 function openCouncil() {
-  S.actStart = S.council?.reviewed ? S.actStart : todayISO();
+  if (!S.council?.reviewed && !isReplan()) S.actStart = todayISO();
   const c = councilDays();
   save();
   if (c.reviewed) return renderReview();
   const knownPack = S.pack.map((p) => p.name).join(", ");
   $("#council-body").innerHTML = `
     <p class="eyebrow">Act ${S.act} · War council</p>
-    <h2 class="create-title">Plan the week</h2>
-    <p class="lede" style="margin:-8px 0 0">Choose any dinners you already want, mark busy nights and nights off, and Claude fills in the rest.</p>
+    <h2 class="create-title">${isReplan() ? "Re-plan the week" : "Plan the week"}</h2>
+    <p class="lede" style="margin:-8px 0 0">${isReplan()
+      ? "Clear any dinner you want to change and Claude picks something new, or type your own. Dinners you leave alone stay as they are."
+      : "Choose any dinners you already want, mark busy nights and nights off, and Claude fills in the rest."}</p>
     <div class="council-days">${c.days.map((d, i) => {
       const date = dateFor(i);
+      if (d.locked) {
+        const q = S.quests[i];
+        return `<div class="council-day is-out"><div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
+          <div class="cd-main"><p class="q-title" style="margin:6px 0 0">${esc(q.name)}</p><div class="q-meta">${questChips(q)}</div></div></div>`;
+      }
       const off = d.out || d.leftovers;
       return `<div class="council-day ${off ? "is-out" : ""}">
         <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
@@ -947,6 +1092,7 @@ function openCouncil() {
   show("council");
   const read = () => {
     c.days.forEach((d, i) => {
+      if (d.locked) return;
       if (!$(`#cd-req-${i}`).disabled) d.request = $(`#cd-req-${i}`).value.trim();
       d.busy = $(`#cd-busy-${i}`).checked;
       d.out = $(`#cd-out-${i}`).checked;
@@ -972,14 +1118,20 @@ function openCouncil() {
     read();
     addKitchenToPack(c);
     if (!hasKey()) {
-      const missing = c.days.filter((d) => !d.out && !d.leftovers && !d.request).length;
+      const missing = c.days.filter((d) => !d.locked && !d.out && !d.leftovers && !d.request).length;
       if (missing) { toast(`<span class="n">Name a dinner for every night, or mark it as leftovers or a night off.</span>`); return; }
-      c.days.forEach((d) => { if (!d.out && !d.leftovers) d.quest = manualQuest(d.request, d.busy); });
+      c.days.forEach((d) => {
+        if (d.locked || d.out || d.leftovers) return;
+        const kept = keptQuest(d);
+        d.quest = kept ? { ...kept } : manualQuest(d.request, d.busy);
+      });
       c.reviewed = true; save(); renderReview(); return;
     }
-    const cook = c.days.map((d, i) => ({ d, i })).filter(({ d }) => !d.out && !d.leftovers);
+    // Kept dinners don't go back to Claude; it plans only the nights that changed.
+    c.days.forEach((d) => { const kept = keptQuest(d); if (kept) d.quest = { ...kept }; });
+    const cook = c.days.map((d, i) => ({ d, i })).filter(({ d }) => !d.locked && !d.out && !d.leftovers && !keptQuest(d));
     const leftoverNights = c.days.map((d, i) => d.leftovers ? dayInfo(d, i).label : null).filter(Boolean);
-    if (!cook.length) { toast("No cooking this week. Enjoy it!"); }
+    if (!cook.length) { c.reviewed = true; save(); renderReview(); return; }
     try {
       const plan = cook.length ? await loading({
         title: `Act ${S.act}`, sub: "Claude is consulting the old recipe books…", min: 1500, cancellable: true,
@@ -1006,7 +1158,7 @@ function planContext() {
   return {
     party: S.party.map(({ name, likes, dislikes }) => ({ name, likes, dislikes })),
     pack: S.pack.map(({ name, qty, spoil }) => ({ name, qty, spoil })),
-    perks: S.perks, recent: S.recent, notes: S.council.notes, budget: S.budget,
+    perks: S.perks, recent: S.recent, notes: S.council?.notes || "", budget: S.budget,
     history: (S.history || []).slice(0, 15),
     favourites: (S.book || []).map((b) => b.name),
   };
@@ -1042,17 +1194,23 @@ function renderReview() {
   $("#council-body").innerHTML = `
     <p class="eyebrow">Act ${S.act} · War council</p>
     <h2 class="create-title">The plan</h2>
-    <p class="lede" style="margin:-8px 0 0">Change anything you like before the act begins. Shopping list estimate: <b>${gold(cost)}</b> of your ${gold(S.budget)}.</p>
+    <p class="lede" style="margin:-8px 0 0">${isReplan() ? "Change anything you like, then head back to camp." : "Change anything you like before the act begins."} ${cost ? `New shopping: <b>${gold(cost)}</b>` : ""}${isReplan() ? ` · ${gold(S.budget - S.spent)} left this week.` : ` of your ${gold(S.budget)}.`}</p>
     <div class="quests">${c.days.map((d, i) => {
       const date = dateFor(i);
       const q = d.quest;
+      if (d.locked) {
+        const done = S.quests[i];
+        return `<article class="quest ${done.status}"><div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
+          <div class="q-body"><p class="q-title">${esc(done.name)}</p><div class="q-meta">${questChips(done)}</div></div></article>`;
+      }
+      const needs = q?.ingredients ? q.ingredients.map((g) => g.name) : (q?.buy || []);
       return `<article class="quest ${d.out ? "out" : ""}">
         <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
         <div class="q-body">
           ${d.out || d.leftovers ? `<p class="q-title">${d.out ? "Night off" : "Leftovers night"}</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button></div>` : `
           <p class="q-title">${esc(q?.name || "Cook's Choice")}</p>
-          <div class="q-meta"><span class="chip ${(q?.diff || "Easy").toLowerCase()}">${q?.diff || "Easy"}</span><span class="chip">${q?.mins || 40} min</span>${q?.newRecipe ? `<span class="chip new">New recipe</span>` : ""}${d.request ? `<span class="chip status">Your pick</span>` : ""}</div>
-          <p class="q-approve">${(q?.ingredients || []).length ? `Needs: ${esc(q.ingredients.map((g) => g.name).join(", "))}` : "Nothing to buy for this one yet."}</p>
+          <div class="q-meta"><span class="chip ${(q?.diff || "Easy").toLowerCase()}">${q?.diff || "Easy"}</span><span class="chip">${q?.mins || 40} min</span>${q?.newRecipe ? `<span class="chip new">New recipe</span>` : ""}${keptQuest(d) ? `<span class="chip status">Unchanged</span>` : d.request ? `<span class="chip status">Your pick</span>` : ""}</div>
+          <p class="q-approve">${needs.length ? `Needs: ${esc(needs.join(", "))}` : "Nothing to buy for this one yet."}</p>
           <div class="row">
             ${hasKey() ? `<button class="btn" data-rv-reroll="${i}">Something else</button>` : ""}
             <button class="btn" data-rv-edit="${i}">Choose my own</button>
@@ -1063,7 +1221,7 @@ function renderReview() {
     }).join("")}</div>
     <div class="create-actions">
       <button type="button" class="btn" id="rv-back">Back to planning</button>
-      <button type="button" class="btn primary" id="rv-begin">Begin Act ${S.act}</button>
+      <button type="button" class="btn primary" id="rv-begin">${isReplan() ? "Back to camp" : `Begin Act ${S.act}`}</button>
     </div>`;
   show("council");
   $("#council-body").onchange = null;
@@ -1123,8 +1281,59 @@ function chooseOwn(i) {
     });
 }
 
+const nightOff = () => ({ id: uid(), name: "Night off", diff: "Easy", mins: 0, newRecipe: false, status: "out", yes: [], no: [], uses: [] });
+const leftoversNight = () => ({ id: uid(), name: "Leftovers night", kind: "leftovers", diff: "Easy", mins: 10, newRecipe: false, status: "planned", yes: [], no: [], uses: [] });
+const questFromPlan = (q) => ({ id: uid(), ...q, status: "planned", buy: (q.ingredients || []).map((g) => g.name), ingredients: undefined, recipe: bookEntry(q.name)?.recipe || null });
+
+// Adds new shopping to the list, merging with items already on it.
+function mergeSupplies(fresh) {
+  for (const s of fresh) {
+    const have = S.supplies.find((x) => norm(x.name) === norm(s.name));
+    if (have) { for (const f of s.for) if (!have.for.includes(f)) have.for.push(f); if (!have.got) have.cost += s.cost; continue; }
+    if (S.pack.some((p) => !p.leftover && sameItem(p.name, s.name))) s.got = true;
+    S.supplies.push(s);
+  }
+}
+
+// Drops unbought shopping that only the given dinners needed.
+function dropSuppliesFor(names) {
+  S.supplies = S.supplies.filter((s) => {
+    if (s.got || !s.for.length) return true; // bought, or added by hand
+    s.for = s.for.filter((f) => !names.includes(f));
+    return s.for.length > 0;
+  });
+}
+
+async function finishReplan(c) {
+  const from = c.replanFrom;
+  const replaced = [];
+  const fresh = [];
+  S.quests = c.days.map((d, i) => {
+    const old = S.quests[i];
+    if (i < from || d.locked) return old;
+    const kept = keptQuest(d);
+    if (kept) return kept;
+    if (old.status === "planned" && !old.kind) replaced.push(old.name);
+    if (d.out) return nightOff();
+    if (d.leftovers) return leftoversNight();
+    if (d.quest?.ingredients) fresh.push({ name: d.quest.name, ingredients: d.quest.ingredients });
+    return questFromPlan(d.quest || manualQuest(d.request, d.busy));
+  });
+  dropSuppliesFor(replaced);
+  mergeSupplies(suppliesFrom(fresh));
+  S.planning = false;
+  S.council = null;
+  S.bark = pickBark();
+  logLine("Re-planned the rest of the week.");
+  save();
+  await loading({ title: `Act ${S.act}`, sub: "Back to camp with a new plan…", min: 1000 });
+  tab = "quests";
+  enterGame();
+}
+
 async function finishCouncil() {
   const c = councilDays();
+  if (isReplan()) return finishReplan(c);
   S.quests = c.days.map((d) => d.out
     ? { id: uid(), name: "Night off", diff: "Easy", mins: 0, newRecipe: false, status: "out", yes: [], no: [], uses: [] }
     : d.leftovers
@@ -1143,6 +1352,7 @@ function viewQuests() {
     <p class="eyebrow">Act ${S.act} · Week of ${dateFor(0).toLocaleDateString(undefined, { day: "numeric", month: "long" })}</p>
     <h2 class="view-title">Quest Log</h2>
     <p class="lede">${done} of 7 dinners conquered.</p>
+    ${S.quests.slice(S.day).some((q) => q.status === "planned") ? `<button class="btn" data-act="replan" style="margin-bottom:12px">Re-plan the rest of the week</button>` : ""}
     <button class="scan" data-act="book">
       <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 4h-4a2 2 0 0 0-2 2"/><path d="M20 4v14h-6"/></svg>
       <span><b>Recipe Book</b><small>${(S.book || []).length ? `${S.book.length} ${S.book.length === 1 ? "dish" : "dishes"} saved to make again` : "Dishes you mark to make again end up here"}</small></span>
@@ -1173,17 +1383,46 @@ function viewQuests() {
 function renameQuest(i) {
   const q = S.quests[i];
   modal(`<div class="dialog left"><h3>Change dish</h3><p>What's for dinner on ${weekday(dateFor(i), "long")}?</p>
+    ${(S.book || []).length ? `<div class="cd-tags" style="margin-bottom:10px">${S.book.slice(0, 8).map((b) => `<button type="button" class="tag" data-own-book="${esc(b.name)}">${esc(b.name)}</button>`).join("")}</div>` : ""}
     <form id="rn"><input id="rn-name" maxlength="60" value="${esc(q.name)}" aria-label="Dish name">
-    <div class="row" style="margin-top:14px"><button type="button" class="btn" id="rn-x">Cancel</button><button class="btn primary">Save</button></div></form></div>`,
+    <div class="row" style="margin-top:14px"><button type="button" class="btn" id="rn-x">Cancel</button><button class="btn primary">Save</button></div></form>
+    ${hasKey() ? `<p class="hint" style="margin:12px 0 0">Claude works out what to buy for it and updates the shopping list.</p>` : ""}</div>`,
     (root) => {
       root.querySelector("#rn-x").onclick = closeModal;
-      root.querySelector("#rn").onsubmit = (e) => {
+      root.querySelectorAll("[data-own-book]").forEach((b) => b.onclick = () => { root.querySelector("#rn-name").value = b.dataset.ownBook; });
+      root.querySelector("#rn").onsubmit = async (e) => {
         e.preventDefault();
         const v = root.querySelector("#rn-name").value.trim();
-        if (v && v !== q.name) { q.name = v; q.yes = []; q.no = []; q.uses = []; q.buy = []; q.newRecipe = false; q.recipe = null; }
-        closeModal(); render();
+        closeModal();
+        if (!v || v === q.name) return;
+        await changeDish(i, v);
+        render();
       };
     });
+}
+
+// Swaps one planned dinner for another, asking Claude for its details and shopping when there's a key.
+async function changeDish(i, name) {
+  const old = S.quests[i];
+  let next = manualQuest(name, (old.mins || 40) <= 30);
+  if (hasKey()) {
+    const others = S.quests.filter((q, k) => k !== i && q.status !== "out").map((q) => q.name);
+    try {
+      const plan = await loading({
+        title: name, sub: "Claude is working out the shopping…", min: 900, cancellable: true,
+        task: (signal) => planDays({ ...planContext(), notes: "", recent: [...others, ...S.recent], days: [{ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: name, busy: (old.mins || 40) <= 30 }], signal }),
+      });
+      if (plan.quests[0]) next = fromPlan(plan.quests[0]);
+    } catch (err) {
+      toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "Claude couldn't help with that one.")} Changed the name only.</span>`);
+    }
+    show("game");
+  }
+  dropSuppliesFor([old.name]);
+  S.quests[i] = { ...questFromPlan({ ...next, name }), id: old.id };
+  if (next.ingredients?.length) mergeSupplies(suppliesFrom([{ name, ingredients: next.ingredients }]));
+  logLine(`Swapped ${old.name} for ${name}.`);
+  toast(`<span class="g">${esc(name)}</span> is on the menu${next.ingredients?.length ? ". Shopping list updated." : ""}`);
 }
 
 /* Recipes */
@@ -1319,6 +1558,54 @@ function openBook() {
   $("#recipe-body").querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openRecipe(b.dataset.open));
 }
 
+/* Ledger: where the gold went */
+function addLedger(entry) {
+  S.ledger = [{ id: uid(), act: S.act, date: todayISO(), ...entry }, ...(S.ledger || [])].slice(0, 200);
+}
+
+function openLedger() {
+  const now = (S.ledger || []).filter((e) => e.act === S.act);
+  const byAisle = {};
+  for (const e of now) for (const it of e.items) byAisle[it.aisle || "Other"] = (byAisle[it.aisle || "Other"] || 0) + it.price;
+  const aisles = Object.entries(byAisle).sort((a, b) => b[1] - a[1]);
+  const maxAisle = aisles[0]?.[1] || 1;
+  const pct = Math.min(100, (S.spent / Math.max(1, S.budget)) * 100);
+  const past = [...(S.acts || [])].reverse();
+  const maxPast = Math.max(1, ...past.map((a) => Math.max(a.spent, a.budget)));
+  const avg = past.length ? past.reduce((x, a) => x + a.spent, 0) / past.length : 0;
+  $("#recipe-body").innerHTML = `
+    <button class="btn" id="rc-back">← Back</button>
+    <p class="eyebrow">Act ${S.act}</p>
+    <h2 class="recipe-title">The Ledger</h2>
+    <section class="recipe-block">
+      <div class="ledger-head"><b class="${S.spent > S.budget ? "no" : ""}">${gold(S.spent)}</b><span>of ${gold(S.budget)} spent · ${gold(S.budget - S.spent)} left</span></div>
+      <div class="bar big"><i class="${S.spent > S.budget ? "over" : ""}" style="width:${pct}%"></i></div>
+    </section>
+    <section class="recipe-block">
+      <h3>By aisle</h3>
+      ${aisles.length ? `<div class="bars">${aisles.map(([a, v]) => `
+        <div class="bar-row"><span>${esc(a)}</span><div class="bar"><i style="width:${(v / maxAisle) * 100}%"></i></div><b>${gold(v)}</b></div>`).join("")}</div>`
+      : `<p class="hint">Nothing bought yet this act. Scan a receipt or tick items off the list.</p>`}
+    </section>
+    <section class="recipe-block">
+      <h3>Purchases</h3>
+      ${now.length ? `<div class="purchases">${now.map((e) => `
+        <details class="purchase"><summary><span>${esc(e.store)}<small>${new Date(e.date + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })} · ${e.items.length} ${e.items.length === 1 ? "item" : "items"}</small></span><b>${gold(e.total)}</b></summary>
+          <ul>${e.items.map((it) => `<li><span>${esc(it.name)}</span><span>${it.price.toFixed(2)}</span></li>`).join("")}</ul>
+        </details>`).join("")}</div>` : `<p class="hint">No purchases recorded this act.</p>`}
+    </section>
+    <section class="recipe-block">
+      <h3>Past acts</h3>
+      ${past.length ? `<p class="hint">Average ${gold(avg)} a week over ${past.length} ${past.length === 1 ? "act" : "acts"}.</p>
+        <div class="bars">${past.map((a) => `
+          <div class="bar-row"><span>Act ${a.act}</span><div class="bar"><i class="${a.spent > a.budget ? "over" : ""}" style="width:${(a.spent / maxPast) * 100}%"></i><em style="left:${(a.budget / maxPast) * 100}%" title="Budget ${gold(a.budget)}"></em></div><b>${gold(a.spent)}</b></div>`).join("")}</div>
+        <p class="hint">The thin line on each bar is that week's budget.</p>`
+      : `<p class="hint">Finished acts show up here so you can compare weeks.</p>`}
+    </section>`;
+  show("recipe");
+  $("#rc-back").onclick = closeRecipe;
+}
+
 function closeRecipe() {
   wakeLock?.release?.().catch(() => {});
   wakeLock = null;
@@ -1365,11 +1652,13 @@ function toggleSupply(id) {
   s.got = !s.got;
   if (s.got) {
     S.spent += s.cost;
+    addLedger({ source: "list", store: "Ticked off the list", total: s.cost, items: [{ name: s.name, price: s.cost, aisle: s.aisle }], supplyId: s.id });
     addToPack({ name: s.name, qty: 1, aisle: s.aisle, price: s.cost, spoil: null });
     toast(`<span class="g">+1 ${esc(s.name)}</span> added to Pack`);
     checkSuppliesCleared();
   } else {
     S.spent -= s.cost;
+    S.ledger = (S.ledger || []).filter((e) => e.supplyId !== s.id);
     const p = S.pack.find((x) => sameItem(x.name, s.name) && !x.leftover);
     if (p) { p.qty -= 1; S.pack = S.pack.filter((x) => x.qty > 0); }
   }
@@ -1546,6 +1835,7 @@ function collectLoot(items, store) {
     if (s) { s.got = true; ticked += 1; }
   }
   S.spent += spent;
+  addLedger({ source: "receipt", store: store || "Receipt", total: spent, items: items.map((it) => ({ name: it.name, price: Number(it.price) || 0, aisle: it.aisle })) });
   logLine(`Brought back ${items.length} items${store ? ` from ${store}` : ""} for ${gold(spent)}.`);
   toast(`<span class="g">+${items.length} items</span> added to Pack`);
   if (ticked) setTimeout(() => toast(`Ticked off <span class="g">${ticked}</span> on the supply list`), 450);
@@ -1577,9 +1867,11 @@ document.addEventListener("click", (e) => {
   if (d.act === "scan") return scanReceipt();
   if (d.act === "brew") return brew();
   if (d.act === "book") return openBook();
+  if (d.act === "replan") return startReplan();
   if (d.act === "addleft") return addLeftoversByHand();
   if (d.eatleft) return eatLeftovers(+d.eatleft);
   if (t.id === "open-menu") { save(); renderMenu(); }
+  if (t.id === "open-ledger") openLedger();
 });
 
 document.addEventListener("submit", (e) => {
@@ -1635,6 +1927,37 @@ embers();
 S = loadSave();
 renderMenu();
 cloud.onUser((u) => {
+  $("#create-sync").hidden = !!u;
   if (u) onSignedIn();
   else if (!$("#menu").hidden) renderMenu();
 });
+
+// First launch on a device: offer sign-in before anything is created, so campaigns don't end up split.
+const WELCOME_KEY = "hh-welcomed";
+cloud.authReady.then(() => {
+  let seen = false;
+  try { seen = !!localStorage.getItem(WELCOME_KEY); } catch {}
+  if (cloud.user || S || seen) return;
+  const done = () => { try { localStorage.setItem(WELCOME_KEY, "1"); } catch {} closeModal(); };
+  modal(`<div class="dialog"><h3>Welcome, traveller</h3>
+    <p>Sign in with Google to keep your campaign on all your devices and share it with your household. You can also play on this device only and sign in later.</p>
+    <div class="choices">
+      <button class="choice" id="wl-in"><b>Sign in with Google</b><small>Recommended if you'll use more than one device</small></button>
+      <button class="choice" id="wl-local"><b>Play on this device only</b><small>Your campaign is saved in this browser</small></button>
+    </div>
+    <p class="hint" style="margin:14px 0 0">Joining someone's household? Sign in, then enter their invite code in Settings → Household.</p></div>`,
+    (root) => {
+      root.querySelector("#wl-local").onclick = done;
+      root.querySelector("#wl-in").onclick = async () => {
+        done();
+        try { await cloud.signIn(); } catch (err) { toast(`<span class="n">${esc(err.message)}</span>`); }
+      };
+    });
+});
+
+/* ---------- Offline ---------- */
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+addEventListener("offline", () => toast("You're offline. Everything still works except Claude: scanning, planning and new recipes."));
+addEventListener("online", () => toast("Back online. Your campaign is syncing."));

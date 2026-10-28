@@ -14,6 +14,9 @@ A meal planner and grocery tracker played as a fantasy campaign. Each week is an
 - **Cook and rest.** Mark tonight's dinner as cooked, then take a Long Rest to move to the next day. Food in your Pack spoils overnight.
 - **After dinner.** Rate the meal 👍 or 👎 for each person who ate. Anyone left blank wasn't there, so their approval doesn't change. Tick **Make it again** to save it to your recipe book, and say how many portions are left over (None, 1, 2 or 3+). Leftovers go into your Pack and keep for 3 days.
 - **Recipe book.** Dishes you've marked to make again, with their saved recipes. Open it from the Quest Log, or pick from it when planning.
+- **Re-plan mid-week.** When plans change, **Re-plan the rest of the week** in the Quest Log sends the remaining nights back to the war council. Nights you leave alone keep their shopping and recipe; Claude plans only the ones you clear. **Change dish** on a single night also asks Claude what to buy and updates the shopping list.
+- **Used up.** After dinner you say what you finished from the Pack (a bag, a tin, two eggs), so the Pack stays accurate.
+- **The Ledger.** Tap your gold to see this week's spending by aisle, every receipt and ticked item, and past weeks against their budgets.
 - **Leftovers.** Mark any night as a **Leftovers night** when planning (Claude makes the dinner before it a bit bigger). On the night, choose which leftovers you ate. You can also add leftovers by hand from the Pack, for example after a takeaway.
 - **New recipes.** Roll a d20 against DC 12. A natural 20 adds the dish to your recipe book.
 - **Supplies.** The week's shopping list, grouped by aisle. Tick items off, or scan the receipt afterwards.
@@ -35,11 +38,17 @@ These use your own Claude API key:
 
 The key is saved in your browser (and, if you choose, in your own Firebase account) and is sent only to Claude's API. It is never part of this repository. Anyone who can use your unlocked device could find it, so only save it on devices you trust.
 
-## Saves and sync
+## Saves, sync and households
 
-Your campaign is always saved in the browser. Choose **Sign in to sync** on the main menu to sign in with Google, and your campaign is stored in your account (Firebase Firestore) and kept in step across every device you sign in on. If a device already has a different campaign when you sign in, you choose which one to keep.
+Your campaign is always saved in the browser. The first time you open the app it offers Google sign-in; you can also sign in later from the main menu. Signed in, your campaign is stored in Firebase Firestore and kept in step across every device you use. If a device already has a different campaign when you sign in, you choose which one to keep.
 
-In Settings you can also tick **Keep the key in my account** so your other devices pick up your Claude API key automatically. The Firestore rules in `firestore.rules` let each account read and write only its own document.
+**Households** share one campaign between several Google accounts. In **Settings → Household**, make an invite code (valid for 7 days) and give it to someone; they sign in on their own device and enter it under **Join a household**. Everyone then sees the same plan, shopping list and Pack. The person who started the campaign can remove members, and anyone can leave. Each person uses their own Claude API key.
+
+## Offline
+
+Once you've opened it with signal, the app works offline: the camp, quest log, recipes you've already opened, shopping list and Pack. Changes sync when you're back online. Claude's features (scanning, planning, new recipes) need a connection.
+
+In Settings you can also tick **Keep the key in my account** so your other devices pick up your Claude API key automatically. The Firestore rules in `firestore.rules` keep each account's settings private and let only a household's members read or save its campaign.
 
 ## Install on your phone
 
@@ -61,7 +70,8 @@ Then open http://localhost:5173.
   - `index.html` holds the screens.
   - `styles.css` is the look.
   - `app.js` is the game: campaign state, the day cycle, quests, supplies, Pack and party.
-  - `cloud.js` is Google sign-in and campaign sync through Firebase.
+  - `cloud.js` is Google sign-in, campaign sync and households through Firebase.
+  - `sw.js` is the service worker that makes the app work offline.
   - `claude.js` handles everything that talks to Claude: receipt reading, week planning and image resizing. To keep the API key off devices, replace this file with calls to a small serverless function.
 - `firebase.json`, `.firebaserc`, `firestore.rules`: the Firebase project (`hearth-and-haversack`) and its database rules. Deploy rule changes with `firebase deploy --only firestore`.
 - `old/prototype-v1.html` is the first clickable mock-up.

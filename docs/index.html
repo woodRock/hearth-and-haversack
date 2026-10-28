@@ -12,7 +12,7 @@
   <link rel="apple-touch-icon" href="icon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=Alegreya+Sans:wght@400;500;700&display=swap">
-  <link rel="stylesheet" href="styles.css?v=6">
+  <link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
   <canvas id="embers" aria-hidden="true"></canvas>
@@ -37,6 +37,10 @@
     <form id="create-form" class="create-inner gutter">
       <p class="eyebrow">New campaign</p>
       <h2 class="create-title">Who keeps this hearth?</h2>
+      <div class="sync-note" id="create-sync" hidden>
+        <span>You're not signed in, so this campaign will only be on this device.</span>
+        <button type="button" class="btn" id="create-signin">Sign in first</button>
+      </div>
 
       <label class="field">
         <span>Your name</span>
@@ -100,7 +104,7 @@
           <h1 id="hero-line">Hearthkeeper</h1>
           <div class="sub" id="lvl-line"></div>
         </div>
-        <div class="purse"><b id="gold"></b><span>gold left</span></div>
+        <button class="purse" id="open-ledger" aria-label="Open the ledger"><b id="gold"></b><span>gold left</span></button>
       </div>
       <div class="xp">
         <span>XP</span>
@@ -124,6 +128,6 @@
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div id="modal"></div>
 
-  <script src="app.js?v=6" type="module"></script>
+  <script src="app.js?v=7" type="module"></script>
 </body>
 </html>

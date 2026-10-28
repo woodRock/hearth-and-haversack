@@ -1,9 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each player can read and write only their own campaign.
+
+    // Each account's settings: which campaign it plays and its private API key.
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // A campaign is shared by its members (a household).
+    match /campaigns/{id} {
+      function signedIn() { return request.auth != null; }
+      function isMember() { return signedIn() && request.auth.uid in resource.data.members; }
+      function isOwner() { return signedIn() && request.auth.uid == resource.data.owner; }
+      function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+      function onlyMyName() {
+        return request.resource.data.names.diff(resource.data.names).affectedKeys().hasOnly([request.auth.uid]);
+      }
+
+      allow read: if isMember();
+
+      allow create: if signedIn()
+        && request.resource.data.owner == request.auth.uid
+        && request.resource.data.members == [request.auth.uid];
+
+      allow update: if
+        // Members save the campaign itself.
+        (isMember() && changed().hasOnly(['state', 'savedAt', 'device']))
+        // The owner manages membership, but can't hand the campaign to someone else.
+        || (isOwner() && request.resource.data.owner == resource.data.owner)
+        // Joining with an invite: add only yourself.
+        || (signedIn() && !(request.auth.uid in resource.data.members)
+            && changed().hasOnly(['members', 'names'])
+            && request.resource.data.members.toSet() == resource.data.members.toSet().union([request.auth.uid].toSet())
+            && onlyMyName())
+        // Leaving: remove only yourself.
+        || (isMember() && changed().hasOnly(['members', 'names'])
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([request.auth.uid].toSet())
+            && onlyMyName());
+
+      allow delete: if isOwner();
+    }
+
+    // Invite codes: anyone signed in can look up a code they were given, but not list them.
+    match /invites/{code} {
+      allow get: if request.auth != null;
+      allow create: if request.auth != null
+        && request.resource.data.createdBy == request.auth.uid
+        && request.auth.uid in get(/databases/$(database)/documents/campaigns/$(request.resource.data.campaignId)).data.members;
+      allow delete: if request.auth != null && resource.data.createdBy == request.auth.uid;
     }
   }
 }
