@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=8";
-import * as cloud from "./cloud.js?v=8";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=9";
+import * as cloud from "./cloud.js?v=9";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -1816,16 +1816,19 @@ function scanReceipt() {
 $("#receipt-input").onchange = async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
+  const open = S.supplies.filter((x) => !x.got);
   let result;
   try {
     result = await loading({
       title: "Reading the receipt", sub: "Claude is deciphering the merchant's scroll…", min: 1200, cancellable: true,
-      task: async (signal) => readReceipt({ ...(await prepareImage(file)), signal }),
+      task: async (signal) => readReceipt({ ...(await prepareImage(file)), shopping: open.map((x) => x.name), signal }),
     });
   } catch (err) {
     toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "That receipt couldn't be read. Try a flatter, sharper photo.")}</span>`);
     return;
   }
+  // Claude's match to the supply list; null means it found none.
+  for (const it of result.items || []) it.supplyId = open[it.supply]?.id ?? null;
   if (S.planning) openCouncil();
   else { show("game"); render(); }
   showLoot(result);
@@ -1843,7 +1846,7 @@ function showLoot(result) {
     <p>${items.length} items found${result.total ? ` · receipt total ${result.total.toFixed(2)}` : ""}. Untick anything that isn't for the Pack.</p>
     <div class="loot">${items.map((it, i) => `
       <label><input type="checkbox" id="loot-${i}" checked>
-        <span class="nm">${esc(it.name)}${it.qty > 1 ? ` ×${it.qty}` : ""}<small>${esc(it.aisle)}${it.spoil_days ? ` · keeps ~${it.spoil_days}d` : ""}</small></span>
+        <span class="nm">${esc(it.name)}${it.qty > 1 ? ` ×${it.qty}` : ""}<small>${esc(it.aisle)}${it.spoil_days ? ` · keeps ~${it.spoil_days}d` : ""}${supplyFor(it) ? ` · <span class="tick">ticks off ${esc(supplyFor(it).name)}</span>` : ""}</small></span>
         <span class="pr">${(Number(it.price) || 0).toFixed(2)}</span></label>`).join("")}</div>
     <div class="row"><button class="btn" id="loot-x">Discard</button><button class="btn primary" id="loot-take">Take all</button></div></div>`,
     (root) => {
@@ -1862,6 +1865,12 @@ function showLoot(result) {
   return sum;
 }
 
+// The supply-list entry a receipt item covers: Claude's match when it was asked, else a name match.
+function supplyFor(it) {
+  if ("supplyId" in it) return it.supplyId ? S.supplies.find((x) => x.id === it.supplyId && !x.got) : null;
+  return S.supplies.find((x) => !x.got && sameItem(x.name, it.name));
+}
+
 function collectLoot(items, store) {
   let spent = 0, ticked = 0;
   for (const it of items) {
@@ -1869,8 +1878,8 @@ function collectLoot(items, store) {
     const price = Number(it.price) || 0;
     spent += price;
     addToPack({ name: it.name, qty, aisle: it.aisle, price, spoil: it.spoil_days > 0 ? it.spoil_days : null });
-    const s = S.supplies.find((x) => !x.got && sameItem(x.name, it.name));
-    if (s) { s.got = true; ticked += 1; }
+    const s = supplyFor(it);
+    if (s && !s.got) { s.got = true; ticked += 1; }
   }
   S.spent += spent;
   addLedger({ source: "receipt", store: store || "Receipt", total: spent, items: items.map((it) => ({ name: it.name, price: Number(it.price) || 0, aisle: it.aisle })) });

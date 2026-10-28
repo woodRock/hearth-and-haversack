@@ -34,8 +34,9 @@ const RECEIPT_SCHEMA = {
           price: { type: "number" },
           aisle: { type: "string", enum: AISLES },
           spoil_days: { type: "integer" },
+          supply: { type: "integer" },
         },
-        required: ["name", "qty", "price", "aisle", "spoil_days"],
+        required: ["name", "qty", "price", "aisle", "spoil_days", "supply"],
         additionalProperties: false,
       },
     },
@@ -142,7 +143,11 @@ async function ask({ content, schema, effort, signal }) {
   }
 }
 
-export function readReceipt({ image, mediaType, signal }) {
+// shopping: names still to buy on the supply list. Each item's supply is its index there, or -1.
+export function readReceipt({ image, mediaType, shopping = [], signal }) {
+  const list = shopping.length
+    ? shopping.map((name, i) => `${i}. ${name}`).join("\n")
+    : "(the shopping list is empty)";
   return ask({
     effort: "low",
     schema: RECEIPT_SCHEMA,
@@ -158,6 +163,10 @@ export function readReceipt({ image, mediaType, signal }) {
 - price: the line price after any discount on that line, as a number. Use 0 if you can't read it.
 - aisle: the store section it belongs in.
 - spoil_days: roughly how many days until it spoils when stored the usual way. Use 0 for shelf-stable items like tins, pasta, rice and spices.
+- supply: the number of the shopping list entry below that this item covers, or -1 if none does. Match on what the item is, not the exact words: "Tasty Cheese" covers "Cheddar", "Scallions" covers "Spring Onions", "Beef Mince 500g" covers "Mince". Don't match items that only share a word: "Egg Noodles" doesn't cover "Eggs". Several receipt lines can cover the same entry.
+
+Shopping list:
+${list}
 
 Skip taxes, totals, bag fees, loyalty and payment lines. store is the shop name ("" if not shown) and total is the receipt total (0 if not shown). If the photo isn't a receipt, set is_receipt to false and return no items.`,
       },

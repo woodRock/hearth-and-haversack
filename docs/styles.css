@@ -442,6 +442,7 @@ nav.tabs button[aria-selected="true"] { color: var(--gold); }
 .loot input { accent-color: var(--gold); width: 18px; height: 18px; flex: none; }
 .loot .nm { flex: 1; min-width: 0; }
 .loot .nm small { display: block; font-family: var(--ui); font-size: 12px; color: var(--muted); }
+.loot .tick { color: var(--moss); }
 .loot .pr { font-family: var(--ui); color: var(--gold); font-variant-numeric: tabular-nums; }
 .settings { display: flex; flex-direction: column; gap: 18px; text-align: left; }
 .settings .field > span { margin-bottom: 0; }
