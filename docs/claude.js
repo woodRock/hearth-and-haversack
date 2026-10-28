@@ -144,16 +144,23 @@ Skip taxes, totals, bag fees, loyalty and payment lines. store is the shop name 
   });
 }
 
-export function planWeek({ party, pack, perks, recent, signal }) {
+// days: the nights to cook, in order: [{ label: "Mon 3 Nov", request: "Tacos" | "", busy: bool }].
+// Returns { quests } with exactly one dinner per day, in the same order.
+export function planDays({ days, party, pack, perks, recent, notes, budget, signal }) {
   const partyText = party
     .map((m) => `- ${m.name}${m.likes ? `, likes ${m.likes}` : ""}${m.dislikes ? `, dislikes ${m.dislikes}` : ""}`)
     .join("\n");
   const packText = pack.map((p) => `- ${p.name} x${p.qty}${p.spoil ? ` (spoils in ${p.spoil} days)` : ""}`).join("\n");
+  const dayText = days
+    .map((d, i) => `${i + 1}. ${d.label}: ${d.request ? `they've chosen "${d.request}"` : "your choice"}${d.busy ? " (busy night, 30 minutes or less)" : ""}`)
+    .join("\n");
+  const single = days.length === 1;
   return ask({
     effort: "medium",
     schema: PLAN_SCHEMA,
     signal,
-    content: `Plan 7 home-cooked dinners for this household, one per day in order.
+    content: `Plan home-cooked dinners for this household. Return exactly ${days.length} ${single ? "dinner" : "dinners"} in the quests array, one per night, in this order:
+${dayText}
 
 Household:
 ${partyText || "- Just one person, no stated preferences."}
@@ -161,12 +168,16 @@ ${partyText || "- Just one person, no stated preferences."}
 Already in the fridge and pantry:
 ${packText || "- Nothing noted."}
 
+Their notes for this week: ${notes || "none"}
+Weekly food budget: about ${budget} in their local currency, for everything on the list.
 Cuisines and skills unlocked: ${perks.join(", ") || "none yet"}.
-Dinners from recent weeks (avoid repeating these): ${recent.join(", ") || "none"}.
+Dinners to avoid repeating: ${recent.join(", ") || "none"}.
 
 Rules:
-- Use up items that spoil soon in the first few days. List those under uses_from_pack using their exact names from the list above.
-- Mix easy weeknight meals with one or two bigger cooks. Set new_recipe to true for exactly one adventurous dish.
+- Where they've chosen a dish, keep their dish and its name as they wrote it (tidy the capitalisation) and fill in its details and ingredients.
+- Busy nights take 30 minutes or less.
+- Use up items that spoil soon on the earliest nights. List those under uses_from_pack using their exact names from the pantry list.
+${single ? "- Set new_recipe to false unless this is clearly an adventurous dish." : "- Mix easy weeknight meals with one or two bigger cooks. Set new_recipe to true for exactly one adventurous dish you picked (never one they chose)."}
 - approves and disapproves hold names from the household list, based on their likes and dislikes. Leave them empty when nobody has a strong view.
 - ingredients lists only what still needs buying, with a rough cost at a typical supermarket. Use simple names a shopper would recognise.`,
   });

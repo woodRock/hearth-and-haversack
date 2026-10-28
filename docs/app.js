@@ -1,4 +1,5 @@
-import { readReceipt, planWeek, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js";
+import { readReceipt, planDays, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js";
+import * as cloud from "./cloud.js";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -29,22 +30,7 @@ const LINES = [
   "That pot has seen things.",
 ];
 
-// Example week for a new campaign. yes/no are companion slots (1-3).
-const TEMPLATE_WEEK = [
-  { name: "Garlic Butter Chicken & Greens", diff: "Easy", mins: 30, yes: [2], no: [], uses: ["Spinach"], ing: [["Chicken Thighs", "Butcher & Fishmonger", 5], ["Green Beans", "Produce", 2]] },
-  { name: "Harvest Pumpkin Soup", diff: "Easy", mins: 40, yes: [1], no: [], uses: ["Onions"], ing: [["Pumpkin", "Produce", 3], ["Double Cream", "Dairy", 2], ["Crusty Bread", "Bakery", 2]] },
-  { name: "Spiced Lamb Flatbreads", diff: "Moderate", mins: 35, yes: [2], no: [1], uses: [], ing: [["Lamb Mince", "Butcher & Fishmonger", 7], ["Feta", "Dairy", 3], ["Flatbreads", "Bakery", 2]] },
-  { name: "Wild Mushroom Risotto", diff: "Moderate", mins: 45, yes: [1], no: [2], uses: ["Arborio Rice", "Parmesan"], ing: [["Chestnut Mushrooms", "Produce", 2], ["Stock Cubes", "Larder", 1]] },
-  { name: "Tavern Fish Pie", diff: "Hard", mins: 70, yes: [1, 2, 3], no: [], uses: ["Butter"], ing: [["Smoked Haddock", "Butcher & Fishmonger", 8], ["Potatoes", "Produce", 2], ["Lemons", "Produce", 1]] },
-  { name: "Thai Green Curry", diff: "Hard", mins: 50, yes: [], no: [], uses: [], ing: [["Green Curry Paste", "Larder", 3], ["Coconut Milk", "Larder", 2], ["Fresh Basil", "Produce", 2]], newRecipe: true },
-  { name: "Roast Roots & Onion Gravy", diff: "Easy", mins: 60, yes: [1], no: [], uses: ["Onions"], ing: [["Parsnips", "Produce", 2], ["Carrots", "Produce", 1]] },
-];
-
-const STARTER_PACK = [
-  ["Onions", 4, null], ["Garlic", 6, null], ["Arborio Rice", 1, null], ["Butter", 1, 20],
-  ["Parmesan", 1, 21], ["Eggs", 6, 10], ["Spinach", 1, 2], ["Smoked Paprika", 1, null],
-];
-
+// Placeholder text for the companion fields on the creation screen.
 const EXAMPLE_PARTY = [
   { name: "Mira", likes: "soup, vegetables", dislikes: "lamb" },
   { name: "Tobin", likes: "anything meaty", dislikes: "mushrooms" },
@@ -87,13 +73,71 @@ function save() {
   if (!S) return;
   S.savedAt = Date.now();
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch {}
+  cloud.saveCloud(S);
 }
 function loadSave() {
   try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
 }
+function storeLocal(state) {
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch {}
+}
 function deleteSave() {
   try { localStorage.removeItem(SAVE_KEY); } catch {}
+  cloud.deleteCloudCampaign().catch(() => {});
   S = null;
+}
+const summary = (st) => `${st.party[0].name} · Act ${st.act}, Day ${Math.min(st.day + 1, 7)} · Level ${st.level}`;
+
+/* ---------- Account sync ---------- */
+let unwatch = () => {};
+let syncKey = false;
+
+async function onSignedIn() {
+  let remote;
+  try { remote = await cloud.loadCloud(); } catch { toast(`<span class="n">Couldn't reach your saved campaign. Playing on this device for now.</span>`); return; }
+  syncKey = Boolean(remote?.apiKey);
+  if (remote?.apiKey && !hasKey()) setKey(remote.apiKey);
+  const local = S || loadSave();
+  const cloudState = remote?.state;
+  if (cloudState && local && cloudState.savedAt !== local.savedAt) {
+    await new Promise((resolve) => modal(`<div class="dialog"><h3>Two campaigns found</h3>
+      <p>Which one should this account keep? The other is replaced on every device.</p>
+      <div class="choices">
+        <button class="choice" data-pick="cloud"><b>Your account's campaign</b><small>${esc(summary(cloudState))}</small></button>
+        <button class="choice" data-pick="local"><b>This device's campaign</b><small>${esc(summary(local))}</small></button>
+      </div></div>`,
+      (root) => root.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => {
+        if (b.dataset.pick === "cloud") { S = cloudState; storeLocal(S); }
+        else { S = local; save(); cloud.flush(); }
+        closeModal(); resolve();
+      })));
+  } else if (cloudState) {
+    S = cloudState; storeLocal(S);
+  } else if (local) {
+    S = local; save(); cloud.flush();
+  }
+  unwatch();
+  unwatch = cloud.watchCloud(applyRemote);
+  refreshScreen();
+}
+
+function applyRemote(remote) {
+  if (remote.apiKey && remote.apiKey !== getKey()) setKey(remote.apiKey);
+  if (!remote.state || (S && remote.savedAt <= (S.savedAt || 0))) return;
+  S = remote.state;
+  storeLocal(S);
+  if (!modalOpen) { toast("Synced from your other device"); refreshScreen(); }
+}
+
+// Redraw whichever screen is showing after the campaign changes underneath it.
+function refreshScreen() {
+  if (!$("#game").hidden) {
+    if (!S) return renderMenu();
+    if (S.planning) return openCouncil();
+    if (S.day >= 7) return showActEnd();
+    return render();
+  }
+  if (!$("#menu").hidden) renderMenu();
 }
 
 /* ---------- Screens ---------- */
@@ -162,20 +206,35 @@ function renderMenu() {
   const saved = S || loadSave();
   const cont = $("#menu-continue");
   cont.disabled = !saved;
-  $("#continue-detail").textContent = saved
-    ? `${saved.party[0].name} · Act ${saved.act}, Day ${Math.min(saved.day + 1, 7)} · Level ${saved.level}`
-    : "No campaign yet";
-  $("#menu-status").innerHTML = hasKey()
-    ? `Claude: <b>ready</b> · Saved on this device`
-    : `Claude: <b class="off">add your API key in Settings</b> to scan receipts and plan weeks`;
+  $("#continue-detail").textContent = saved ? summary(saved) : "No campaign yet";
+  const u = cloud.user;
+  $("#menu-account").textContent = u ? "Sign out" : "Sign in to sync";
+  $("#menu-status").innerHTML = [
+    hasKey() ? `Claude: <b>ready</b>` : `Claude: <b class="off">add your API key in Settings</b>`,
+    u ? `Synced as <b>${esc(u.displayName || u.email)}</b>` : "Saved on this device only",
+  ].join("<br>");
   show("menu");
 }
+
+$("#menu-account").onclick = async () => {
+  if (cloud.user) {
+    await cloud.flush();
+    unwatch(); unwatch = () => {};
+    await cloud.signOut();
+    toast("Signed out. Your campaign stays on this device too.");
+    renderMenu();
+    return;
+  }
+  try { await cloud.signIn(); }
+  catch (err) { toast(`<span class="n">${esc(err.message)}</span>`); }
+};
 
 $("#menu-continue").onclick = async () => {
   S = S || loadSave();
   if (!S) return;
-  await loading({ title: `Act ${S.act}`, sub: S.day >= 7 ? "The week's tale is told…" : `Returning to camp, Day ${S.day + 1}…`, min: 1200 });
-  if (S.day >= 7) showActEnd();
+  await loading({ title: `Act ${S.act}`, sub: S.planning ? "The war council gathers…" : S.day >= 7 ? "The week's tale is told…" : `Returning to camp, Day ${S.day + 1}…`, min: 1200 });
+  if (S.planning) openCouncil();
+  else if (S.day >= 7) showActEnd();
   else enterGame();
 };
 $("#menu-new").onclick = () => {
@@ -197,8 +256,10 @@ function openSettings() {
     <div class="settings">
       <label class="field"><span>Claude API key</span>
         <div class="keyrow"><input id="set-key" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(getKey())}"><button class="btn" id="set-key-show" type="button">Show</button></div>
-        <small class="hint">Saved only on this device and sent only to Claude. Create one at platform.claude.com, and set a monthly spend limit there. Reading a receipt costs about a cent.</small>
+        <small class="hint">Sent only to Claude. Create one at platform.claude.com, and set a monthly spend limit there. Reading a receipt costs about a cent.</small>
       </label>
+      ${cloud.user ? `<label class="class-card" style="cursor:pointer"><input type="checkbox" id="set-sync-key" ${syncKey ? "checked" : ""}>
+        <span><b style="font-size:17px">Keep the key in my account</b><small>Your other signed-in devices get it automatically. Only you can read it.</small></span></label>` : ""}
       ${S ? `<label class="field"><span>Weekly budget</span><div class="money"><input id="set-budget" type="number" min="10" max="2000" step="5" value="${budget}"><b>gold</b></div></label>` : ""}
       <div class="field"><span>Campaign</span>
         <div class="row" style="justify-content:flex-start"><button class="btn danger" id="set-delete" ${S || loadSave() ? "" : "disabled"}>Delete campaign</button></div>
@@ -213,12 +274,17 @@ function openSettings() {
       };
       const del = root.querySelector("#set-delete");
       del.onclick = () => {
-        if (del.dataset.armed) { deleteSave(); closeModal(); toast("Campaign deleted"); renderMenu(); return; }
+        if (del.dataset.armed) { deleteSave(); closeModal(); toast(cloud.user ? "Campaign deleted from every device" : "Campaign deleted"); renderMenu(); return; }
         del.dataset.armed = "1";
         del.textContent = "Tap again to delete for good";
       };
       root.querySelector("#set-done").onclick = () => {
         setKey(root.querySelector("#set-key").value);
+        const sk = root.querySelector("#set-sync-key");
+        if (sk) {
+          syncKey = sk.checked;
+          cloud.saveCloudKey(syncKey ? getKey() : "").catch(() => toast(`<span class="n">Couldn't update the key in your account.</span>`));
+        }
         const b = root.querySelector("#set-budget");
         if (S && b) { S.budget = Math.max(10, Number(b.value) || S.budget); save(); }
         closeModal();
@@ -255,34 +321,20 @@ $("#create-form").onsubmit = async (e) => {
   S = newCampaign({ name, cls, comps, budget });
   save();
   await loading({ title: "Prologue", sub: "Pitching camp and unpacking the haversack…", min: 2200 });
-  enterGame();
-  modal(`<div class="dialog"><h3>Act 1 begins</h3>
-    <p>Your first week is an example plan. Cook tonight's dinner, then take a <b>Long Rest</b> to move to the next day. When the week ends, Claude can plan the next one around your party.</p>
-    <div class="row"><button class="btn primary" id="ok">To camp</button></div></div>`,
-    (root) => { root.querySelector("#ok").onclick = closeModal; });
+  openCouncil();
 };
 
 function newCampaign({ name, cls, comps, budget }) {
   const party = [{ name, role: CLASSES[cls].name, approval: 80, likes: "", dislikes: "" }];
-  const usingExamples = comps.length === 0;
-  for (const c of usingExamples ? EXAMPLE_PARTY : comps) party.push({ ...c, approval: 60 });
-  const state = {
-    v: 1, cls, act: 1, actStart: todayISO(), day: 0,
+  for (const c of comps) party.push({ ...c, approval: 60 });
+  S = {
+    v: 1, cls, act: 1, actStart: todayISO(), day: 0, planning: true, council: null,
     level: 1, xp: 0, budget: budget + (cls === "rogue" ? 20 : 0), spent: 0,
     perks: [], party, quests: [], supplies: [], pack: [], journal: [], recent: [],
-    stats: { cooked: 0, skipped: 0, wasted: 0, actXP: 0, saved: 0 }, suppliesBonus: false, bark: null,
+    stats: { cooked: 0, skipped: 0, wasted: 0, actXP: 0 }, suppliesBonus: false, bark: null,
   };
-  S = state;
-  const slotName = (i) => party[i]?.name;
-  state.quests = TEMPLATE_WEEK.map((q) => ({
-    id: uid(), name: q.name, diff: q.diff, mins: q.mins, newRecipe: !!q.newRecipe, uses: q.uses, status: "planned",
-    yes: q.yes.map(slotName).filter(Boolean), no: q.no.map(slotName).filter(Boolean),
-  }));
-  state.supplies = suppliesFrom(TEMPLATE_WEEK.map((q) => ({ name: q.name, ingredients: q.ing.map(([n, a, c]) => ({ name: n, aisle: a, cost: c })) })));
-  state.pack = STARTER_PACK.map(([n, qty, spoil]) => ({ id: uid(), name: n, qty, spoil, rarity: n === "Smoked Paprika" ? "rare" : spoil && spoil <= 10 ? "uncommon" : "common" }));
-  state.bark = pickBark();
   logLine(`${name} the ${CLASSES[cls].name} pitched camp.`);
-  return state;
+  return S;
 }
 
 function suppliesFrom(quests) {
@@ -460,10 +512,12 @@ function viewCamp() {
 }
 
 function questChips(q) {
+  if (q.status === "out") return `<span class="chip status">Night off</span>`;
   const status = q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : S.quests[S.day] === q ? "Tonight" : "Planned";
   return `<span class="chip status">${status}</span><span class="chip ${q.diff.toLowerCase()}">${q.diff}</span><span class="chip">${q.mins} min</span>${q.newRecipe ? `<span class="chip new">New recipe</span>` : ""}`;
 }
 function approvalLine(q) {
+  if (q.status === "out") return `<p class="q-approve">No cooking tonight. Eat out, order in, or raid the leftovers.</p>`;
   if (q.newRecipe && q.status === "planned") return `<p class="q-approve">Nobody's tried this before. Roll to see how it goes.</p>`;
   const yes = q.yes.length ? `<span class="yes">${q.yes.map(esc).join(", ")} will approve</span>` : "";
   const no = q.no.length ? `<span class="no">${q.no.map(esc).join(", ")} will disapprove</span>` : "";
@@ -607,67 +661,268 @@ function showActEnd() {
     <h2>The week is won</h2>
     <p class="lede">Here's how the campaign went.</p>
     <div class="ledger">
-      <div><span>Dinners cooked</span><b class="good">${st.cooked} of 7</b></div>
+      <div><span>Dinners cooked</span><b class="good">${st.cooked} of ${S.quests.filter((q) => q.status !== "out").length}</b></div>
       <div><span>Dinners skipped</span><b>${st.skipped}</b></div>
       <div><span>Items lost to spoilage</span><b class="${st.wasted ? "bad" : "good"}">${st.wasted}</b></div>
       <div><span>Gold spent</span><b class="${under ? "good" : "bad"}">${gold(S.spent)} of ${gold(S.budget)}</b></div>
       <div><span>XP earned this act</span><b>${st.actXP}${under ? " + 50 under budget" : ""}${st.wasted === 0 ? " + 30 zero waste" : ""}</b></div>
     </div>
     <div class="stack">
-      <button class="btn primary" id="plan-claude">Plan Act ${S.act + 1} with Claude</button>
+      <button class="btn primary" id="plan-claude">Plan Act ${S.act + 1}</button>
       <button class="btn" id="plan-repeat">Repeat this week's menu</button>
     </div>
-    <p class="note">${hasKey() ? "Claude plans 7 dinners around your party, your Pack and your perks." : "Add your Claude API key in Settings to have Claude plan the week."}</p>`;
+    <p class="note">${hasKey() ? "Pick any dinners you want and Claude plans the rest around your party and your Pack." : "Add your Claude API key in Settings and Claude can plan the week with you."}</p>`;
   show("actend");
   $("#plan-claude").onclick = () => startNextAct(true);
   $("#plan-repeat").onclick = () => startNextAct(false);
 }
 
-async function startNextAct(useClaude) {
-  const lastWeek = S.quests.map((q) => q.name);
-  let plan = null;
-  if (useClaude) {
-    if (!hasKey()) { openSettings(); return; }
-    try {
-      plan = await loading({
-        title: `Act ${S.act + 1}`, sub: "Claude is consulting the old recipe books…", min: 1500, cancellable: true,
-        task: (signal) => planWeek({
-          party: S.party.map(({ name, likes, dislikes }) => ({ name, likes, dislikes })),
-          pack: S.pack.map(({ name, qty, spoil }) => ({ name, qty, spoil })),
-          perks: S.perks, recent: [...lastWeek, ...S.recent].slice(0, 21), signal,
-        }),
-      });
-    } catch (err) {
-      toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "Planning failed. Try again.")}</span>`);
-      return;
-    }
-  }
+async function startNextAct(plan) {
+  const lastWeek = S.quests.filter((q) => q.status !== "out").map((q) => q.name);
   const bonus = (S.spent <= S.budget ? 50 : 0) + (S.stats.wasted === 0 ? 30 : 0);
   S.recent = [...lastWeek, ...S.recent].slice(0, 21);
   S.act += 1; S.actStart = todayISO(); S.day = 0; S.spent = 0; S.suppliesBonus = false;
   S.stats = { cooked: 0, skipped: 0, wasted: 0, actXP: 0 };
-  const names = new Set(S.party.map((m) => m.name));
-  if (plan?.quests?.length) {
-    const qs = plan.quests.slice(0, 7);
-    S.quests = qs.map((q) => ({
-      id: uid(), name: q.name, diff: ["Easy", "Moderate", "Hard"].includes(q.difficulty) ? q.difficulty : "Easy",
-      mins: Number(q.minutes) || 40, newRecipe: !!q.new_recipe, status: "planned",
-      yes: (q.approves || []).filter((n) => names.has(n)), no: (q.disapproves || []).filter((n) => names.has(n)),
-      uses: q.uses_from_pack || [],
-    }));
-    while (S.quests.length < 7) S.quests.push({ id: uid(), name: "Cook's Choice", diff: "Easy", mins: 30, newRecipe: false, status: "planned", yes: [], no: [], uses: [] });
-    S.supplies = suppliesFrom(qs.map((q) => ({ name: q.name, ingredients: (q.ingredients || []).map((g) => ({ name: g.name, aisle: g.aisle, cost: Number(g.cost) || 0 })) })));
-  } else {
-    S.quests = S.quests.map((q) => ({ ...q, id: uid(), status: "planned" }));
-    S.supplies = S.supplies.map((s) => ({ ...s, id: uid(), got: false }));
+  S.pendingBonus = bonus;
+  if (plan) {
+    S.planning = true;
+    S.council = null;
+    save();
+    await loading({ title: `Act ${S.act}`, sub: "The war council gathers…", min: 1200 });
+    openCouncil();
+    return;
   }
+  S.quests = S.quests.map((q) => ({ ...q, id: uid(), status: q.status === "out" ? "out" : "planned" }));
+  S.supplies = S.supplies.map((s) => ({ ...s, id: uid(), got: false }));
+  await beginAct("Repeated last week's menu");
+}
+
+// Shared start of every act once its quests and supplies are set.
+async function beginAct(note) {
+  S.planning = false;
+  S.council = null;
   S.bark = pickBark();
-  logLine(`Act ${S.act} began${plan ? " with a plan from Claude" : ""}.`);
+  logLine(`Act ${S.act} began. ${note}.`);
+  save();
   await loading({ title: `Act ${S.act}`, sub: "A new week on the road…", min: 1400 });
   tab = "camp";
   enterGame();
-  if (bonus) gainXP(bonus, "Act rewards");
+  if (S.pendingBonus) { gainXP(S.pendingBonus, "Act rewards"); S.pendingBonus = 0; }
   render();
+}
+
+/* ---------- War council: plan the week ---------- */
+// S.council holds the in-progress plan so it survives reloads and syncs:
+// { days: [{ request, busy, out, quest? }], notes, kitchen, reviewed }
+function councilDays() {
+  if (!S.council) {
+    S.council = { days: Array.from({ length: 7 }, () => ({ request: "", busy: false, out: false, quest: null })), notes: "", kitchen: "", reviewed: false };
+  }
+  return S.council;
+}
+
+function openCouncil() {
+  S.actStart = S.council?.reviewed ? S.actStart : todayISO();
+  const c = councilDays();
+  save();
+  if (c.reviewed) return renderReview();
+  const knownPack = S.pack.map((p) => p.name).join(", ");
+  $("#council-body").innerHTML = `
+    <p class="eyebrow">Act ${S.act} · War council</p>
+    <h2 class="create-title">Plan the week</h2>
+    <p class="lede" style="margin:-8px 0 0">Choose any dinners you already want, mark busy nights and nights off, and Claude fills in the rest.</p>
+    <div class="council-days">${c.days.map((d, i) => {
+      const date = dateFor(i);
+      return `<div class="council-day ${d.out ? "is-out" : ""}">
+        <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
+        <div class="cd-main">
+          <input id="cd-req-${i}" maxlength="60" value="${esc(d.request)}" placeholder="${d.out ? "Night off" : "Leave blank for Claude"}" aria-label="Dinner for ${weekday(date, "long")}" ${d.out ? "disabled" : ""}>
+          <div class="cd-tags">
+            <label class="tag"><input type="checkbox" id="cd-busy-${i}" ${d.busy ? "checked" : ""} ${d.out ? "disabled" : ""}>Busy night</label>
+            <label class="tag"><input type="checkbox" id="cd-out-${i}" ${d.out ? "checked" : ""}>Night off</label>
+          </div>
+        </div>
+      </div>`;
+    }).join("")}</div>
+    <label class="field"><span>Notes for Claude</span>
+      <textarea id="cd-notes" rows="3" maxlength="500" placeholder="e.g. More vegetables this week. Mira's birthday on Saturday. Use up the chicken in the freezer.">${esc(c.notes)}</textarea>
+    </label>
+    <label class="field"><span>Already in the kitchen</span>
+      <input id="cd-kitchen" maxlength="300" value="${esc(c.kitchen)}" placeholder="e.g. rice, half a cabbage, eggs, frozen peas">
+      <small class="hint">${knownPack ? `Your Pack already has: ${esc(knownPack)}.` : "Comma-separated. Or scan your last receipt to fill your Pack."}</small>
+    </label>
+    <details class="how">
+      <summary>How does Claude plan?</summary>
+      <p>Claude sees what you enter here, your party's likes and dislikes, everything in your Pack (items that spoil soon come first), your weekly budget, the cuisines you've unlocked and your recent dinners so it doesn't repeat them. It doesn't see your receipts directly: scanned items go into your Pack, and Claude reads the Pack.</p>
+    </details>
+    <div class="create-actions">
+      <button type="button" class="btn" id="cd-scan">Scan a receipt first</button>
+      <button type="button" class="btn primary" id="cd-plan">${hasKey() ? "Ask Claude to plan" : "Plan it myself"}</button>
+    </div>
+    ${hasKey() ? "" : `<p class="hint">Add your Claude API key in Settings and Claude can fill in the blank nights and write the shopping list.</p>`}`;
+  show("council");
+  const read = () => {
+    c.days.forEach((d, i) => {
+      d.request = $(`#cd-req-${i}`).value.trim();
+      d.busy = $(`#cd-busy-${i}`).checked;
+      d.out = $(`#cd-out-${i}`).checked;
+    });
+    c.notes = $("#cd-notes").value.trim();
+    c.kitchen = $("#cd-kitchen").value.trim();
+    save();
+  };
+  $("#council-body").onchange = (e) => {
+    read();
+    if (e.target.id?.startsWith("cd-out-")) openCouncil();
+  };
+  $("#cd-scan").onclick = () => { read(); scanReceipt(); };
+  $("#cd-plan").onclick = async () => {
+    read();
+    addKitchenToPack(c);
+    if (!hasKey()) {
+      const missing = c.days.filter((d) => !d.out && !d.request).length;
+      if (missing) { toast(`<span class="n">Name a dinner for every night, or mark it as a night off.</span>`); return; }
+      c.days.forEach((d) => { if (!d.out) d.quest = manualQuest(d.request, d.busy); });
+      c.reviewed = true; save(); renderReview(); return;
+    }
+    const cook = c.days.map((d, i) => ({ d, i })).filter(({ d }) => !d.out);
+    if (!cook.length) { toast("Every night is a night off. Enjoy the week!"); }
+    try {
+      const plan = cook.length ? await loading({
+        title: `Act ${S.act}`, sub: "Claude is consulting the old recipe books…", min: 1500, cancellable: true,
+        task: (signal) => planDays({ ...planContext(), days: cook.map(({ d, i }) => dayInfo(d, i)), signal }),
+      }) : { quests: [] };
+      cook.forEach(({ d }, k) => { d.quest = plan.quests[k] ? fromPlan(plan.quests[k]) : manualQuest(d.request || "Cook's Choice", d.busy); });
+      c.reviewed = true; save(); renderReview();
+    } catch (err) {
+      toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "Planning failed. Try again.")}</span>`);
+    }
+  };
+}
+
+function addKitchenToPack(c) {
+  if (!c.kitchen) return;
+  for (const name of c.kitchen.split(",").map((s) => s.trim()).filter(Boolean)) {
+    const tidy = name.replace(/\b\w/g, (m) => m.toUpperCase());
+    if (!S.pack.some((p) => sameItem(p.name, tidy))) S.pack.push({ id: uid(), name: tidy, qty: 1, spoil: null, rarity: "common" });
+  }
+  c.kitchen = "";
+}
+
+function planContext() {
+  return {
+    party: S.party.map(({ name, likes, dislikes }) => ({ name, likes, dislikes })),
+    pack: S.pack.map(({ name, qty, spoil }) => ({ name, qty, spoil })),
+    perks: S.perks, recent: S.recent, notes: S.council.notes, budget: S.budget,
+  };
+}
+const dayInfo = (d, i) => ({ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: d.request, busy: d.busy });
+
+function fromPlan(q) {
+  const names = new Set(S.party.map((m) => m.name));
+  return {
+    name: q.name, diff: ["Easy", "Moderate", "Hard"].includes(q.difficulty) ? q.difficulty : "Easy",
+    mins: Number(q.minutes) || 40, newRecipe: !!q.new_recipe,
+    yes: (q.approves || []).filter((n) => names.has(n)), no: (q.disapproves || []).filter((n) => names.has(n)),
+    uses: q.uses_from_pack || [],
+    ingredients: (q.ingredients || []).map((g) => ({ name: g.name, aisle: AISLE_ORDER.includes(g.aisle) ? g.aisle : "Larder", cost: Number(g.cost) || 0 })),
+  };
+}
+const manualQuest = (name, busy) => ({ name: name || "Cook's Choice", diff: "Easy", mins: busy ? 30 : 45, newRecipe: false, yes: [], no: [], uses: [], ingredients: [] });
+
+function renderReview() {
+  const c = councilDays();
+  const cost = c.days.reduce((a, d) => a + (d.quest?.ingredients || []).reduce((x, g) => x + g.cost, 0), 0);
+  $("#council-body").innerHTML = `
+    <p class="eyebrow">Act ${S.act} · War council</p>
+    <h2 class="create-title">The plan</h2>
+    <p class="lede" style="margin:-8px 0 0">Change anything you like before the act begins. Shopping list estimate: <b>${gold(cost)}</b> of your ${gold(S.budget)}.</p>
+    <div class="quests">${c.days.map((d, i) => {
+      const date = dateFor(i);
+      const q = d.quest;
+      return `<article class="quest ${d.out ? "out" : ""}">
+        <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
+        <div class="q-body">
+          ${d.out ? `<p class="q-title">Night off</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button></div>` : `
+          <p class="q-title">${esc(q?.name || "Cook's Choice")}</p>
+          <div class="q-meta"><span class="chip ${(q?.diff || "Easy").toLowerCase()}">${q?.diff || "Easy"}</span><span class="chip">${q?.mins || 40} min</span>${q?.newRecipe ? `<span class="chip new">New recipe</span>` : ""}${d.request ? `<span class="chip status">Your pick</span>` : ""}</div>
+          <p class="q-approve">${(q?.ingredients || []).length ? `Needs: ${esc(q.ingredients.map((g) => g.name).join(", "))}` : "Nothing to buy for this one yet."}</p>
+          <div class="row">
+            ${hasKey() ? `<button class="btn" data-rv-reroll="${i}">Something else</button>` : ""}
+            <button class="btn" data-rv-edit="${i}">Choose my own</button>
+            <button class="btn" data-rv-out="${i}">Night off</button>
+          </div>`}
+        </div>
+      </article>`;
+    }).join("")}</div>
+    <div class="create-actions">
+      <button type="button" class="btn" id="rv-back">Back to planning</button>
+      <button type="button" class="btn primary" id="rv-begin">Begin Act ${S.act}</button>
+    </div>`;
+  show("council");
+  $("#council-body").onchange = null;
+  $("#rv-back").onclick = () => { c.reviewed = false; save(); openCouncil(); };
+  $("#rv-begin").onclick = finishCouncil;
+  $("#council-body").querySelectorAll("[data-rv-out]").forEach((b) => b.onclick = () => { c.days[+b.dataset.rvOut].out = true; save(); renderReview(); });
+  $("#council-body").querySelectorAll("[data-rv-cook]").forEach((b) => b.onclick = () => {
+    const d = c.days[+b.dataset.rvCook];
+    d.out = false;
+    if (!d.quest) d.quest = manualQuest(d.request || "Cook's Choice", d.busy);
+    save(); renderReview();
+  });
+  $("#council-body").querySelectorAll("[data-rv-reroll]").forEach((b) => b.onclick = () => rerollDay(+b.dataset.rvReroll));
+  $("#council-body").querySelectorAll("[data-rv-edit]").forEach((b) => b.onclick = () => chooseOwn(+b.dataset.rvEdit));
+}
+
+async function rerollDay(i, request = "") {
+  const c = councilDays();
+  const d = c.days[i];
+  const others = c.days.filter((x, k) => k !== i && x.quest && !x.out).map((x) => x.quest.name);
+  try {
+    const plan = await loading({
+      title: request ? "Writing it up" : "Another idea", sub: request ? `Claude is writing up ${request}…` : "Claude is leafing through the recipe books…", min: 900, cancellable: true,
+      task: (signal) => planDays({
+        ...planContext(), recent: [...others, d.quest?.name, ...S.recent].filter(Boolean),
+        days: [{ ...dayInfo(d, i), request }], signal,
+      }),
+    });
+    if (plan.quests[0]) d.quest = fromPlan(plan.quests[0]);
+    d.request = request;
+  } catch (err) {
+    toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "That didn't work. Try again.")}</span>`);
+  }
+  save();
+  renderReview();
+}
+
+function chooseOwn(i) {
+  const d = councilDays().days[i];
+  modal(`<div class="dialog left"><h3>Your choice</h3><p>What's for dinner on ${weekday(dateFor(i), "long")}?</p>
+    <form id="own"><input id="own-name" maxlength="60" value="${esc(d.request || d.quest?.name || "")}" aria-label="Dish name">
+    <div class="row" style="margin-top:14px"><button type="button" class="btn" id="own-x">Cancel</button><button class="btn primary">Save</button></div></form>
+    ${hasKey() ? `<p class="hint" style="margin:12px 0 0">Claude will work out the ingredients for it.</p>` : ""}</div>`,
+    (root) => {
+      root.querySelector("#own-x").onclick = closeModal;
+      root.querySelector("#own").onsubmit = (e) => {
+        e.preventDefault();
+        const v = root.querySelector("#own-name").value.trim();
+        closeModal();
+        if (!v) return;
+        if (hasKey()) { rerollDay(i, v); return; }
+        d.request = v; d.quest = manualQuest(v, d.busy); save(); renderReview();
+      };
+    });
+}
+
+async function finishCouncil() {
+  const c = councilDays();
+  S.quests = c.days.map((d) => d.out
+    ? { id: uid(), name: "Night off", diff: "Easy", mins: 0, newRecipe: false, status: "out", yes: [], no: [], uses: [] }
+    : { id: uid(), ...d.quest, status: "planned", ingredients: undefined });
+  S.supplies = suppliesFrom(c.days.filter((d) => !d.out && d.quest).map((d) => ({ name: d.quest.name, ingredients: d.quest.ingredients || [] })));
+  // Supplies already gathered (e.g. a receipt scanned during planning) start ticked.
+  for (const s of S.supplies) if (S.pack.some((p) => !p.leftover && sameItem(p.name, s.name))) s.got = true;
+  await beginAct(hasKey() ? "The war council planned the week with Claude" : "The week was planned by hand");
 }
 
 /* Quests */
@@ -885,8 +1140,8 @@ $("#receipt-input").onchange = async (e) => {
     toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "That receipt couldn't be read. Try a flatter, sharper photo.")}</span>`);
     return;
   }
-  show("game");
-  render();
+  if (S.planning) openCouncil();
+  else { show("game"); render(); }
   showLoot(result);
 };
 
@@ -915,7 +1170,7 @@ function showLoot(result) {
         const chosen = items.filter((_, i) => boxes[i].checked);
         collectLoot(chosen, result.store);
         closeModal();
-        render();
+        if (S.planning) openCouncil(); else render();
       };
     });
   return sum;
@@ -1016,3 +1271,7 @@ function embers() {
 embers();
 S = loadSave();
 renderMenu();
+cloud.onUser((u) => {
+  if (u) onSignedIn();
+  else if (!$("#menu").hidden) renderMenu();
+});

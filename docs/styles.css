@@ -115,7 +115,26 @@ input::placeholder { color: #6f604c; }
   .companion { grid-template-columns: 1fr 1fr; }
   .companion input:first-child { grid-column: 1 / -1; }
 }
-.create-actions { display: flex; justify-content: space-between; gap: 10px; }
+.create-actions { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+textarea {
+  width: 100%; min-width: 0; padding: 11px 12px; border-radius: 4px; resize: vertical;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit; font-size: 16px;
+}
+
+/* War council */
+.council-days { display: flex; flex-direction: column; gap: 8px; }
+.council-day { display: grid; grid-template-columns: 52px 1fr; gap: 12px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.council-day.is-out { opacity: .65; }
+.cd-main { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.cd-main input:not([type=checkbox]) { padding: 9px 10px; }
+.cd-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { display: inline-flex; align-items: center; gap: 6px; font-family: var(--ui); font-size: 13px; color: var(--muted); padding: 4px 10px 4px 8px; border: 1px solid var(--line); border-radius: 999px; cursor: pointer; }
+.tag input { accent-color: var(--gold); width: 15px; height: 15px; margin: 0; }
+.tag:has(input:checked) { color: var(--gold); border-color: var(--gold-dim); background: var(--panel-2); }
+.how { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; background: var(--panel); }
+.how summary { font-family: var(--ui); font-weight: 700; color: var(--gold); cursor: pointer; }
+.how p { margin: 8px 0 2px; color: var(--muted); font-size: 15px; }
+.quest.out { opacity: .7; }
 
 /* Loading screen */
 .loading-screen {
