@@ -1,5 +1,5 @@
-import { readReceipt, planDays, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js";
-import * as cloud from "./cloud.js";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=5";
+import * as cloud from "./cloud.js?v=5";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -573,7 +573,7 @@ function tonightActions(q) {
     const cook = q.newRecipe
       ? `<button class="btn primary" data-roll="${i}">Roll d20 to attempt</button>`
       : `<button class="btn primary" data-cook="${i}">Cooked it</button>`;
-    return `${cook}<button class="btn" data-act="rest">Long rest</button>`;
+    return `${cook}<button class="btn" data-recipe="${q.id}">Recipe</button><button class="btn" data-act="rest">Long rest</button>`;
   }
   return `<button class="btn primary" data-act="rest">Long rest · end Day ${S.day + 1}</button>`;
 }
@@ -962,7 +962,7 @@ async function finishCouncil() {
   const c = councilDays();
   S.quests = c.days.map((d) => d.out
     ? { id: uid(), name: "Night off", diff: "Easy", mins: 0, newRecipe: false, status: "out", yes: [], no: [], uses: [] }
-    : { id: uid(), ...d.quest, status: "planned", ingredients: undefined });
+    : { id: uid(), ...d.quest, status: "planned", buy: (d.quest.ingredients || []).map((g) => g.name), ingredients: undefined });
   S.supplies = suppliesFrom(c.days.filter((d) => !d.out && d.quest).map((d) => ({ name: d.quest.name, ingredients: d.quest.ingredients || [] })));
   // Supplies already gathered (e.g. a receipt scanned during planning) start ticked.
   for (const s of S.supplies) if (S.pack.some((p) => !p.leftover && sameItem(p.name, s.name))) s.got = true;
@@ -982,7 +982,8 @@ function viewQuests() {
         const today = i === S.day;
         let actions = "";
         if (today && q.status === "planned") actions = tonightActions(q);
-        else if (i > S.day && q.status === "planned") actions = `<button class="btn" data-totonight="${i}">Make it tonight</button><button class="btn" data-rename="${i}">Change dish</button>`;
+        else if (i > S.day && q.status === "planned") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button><button class="btn" data-totonight="${i}">Make it tonight</button><button class="btn" data-rename="${i}">Change dish</button>`;
+        else if (q.status === "done" || q.status === "skipped") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button>`;
         return `<article class="quest ${today ? "today" : ""} ${q.status}">
           <div class="day"><span>${weekday(d)}</span><b>${d.getDate()}</b></div>
           <div class="q-body">
@@ -1007,10 +1008,119 @@ function renameQuest(i) {
       root.querySelector("#rn").onsubmit = (e) => {
         e.preventDefault();
         const v = root.querySelector("#rn-name").value.trim();
-        if (v) { q.name = v; q.yes = []; q.no = []; q.uses = []; q.newRecipe = false; }
+        if (v && v !== q.name) { q.name = v; q.yes = []; q.no = []; q.uses = []; q.buy = []; q.newRecipe = false; q.recipe = null; }
         closeModal(); render();
       };
     });
+}
+
+/* Recipes */
+// Claude writes a dinner's recipe the first time it's opened; it's kept on the quest after that.
+let recipeTicks = new Set();
+let wakeLock = null;
+
+async function openRecipe(id, { rewrite = false } = {}) {
+  const q = S.quests.find((x) => x.id === id);
+  if (!q) return;
+  if ((!q.recipe || rewrite) && hasKey()) {
+    try {
+      const recipe = await loading({
+        title: q.name, sub: "Claude is copying out the recipe…", min: 900, cancellable: true,
+        task: (signal) => writeRecipe({
+          dish: q.name, minutes: q.mins || 40, busy: (q.mins || 40) <= 30,
+          eaters: S.party.map((m) => m.name),
+          pack: S.pack.filter((p) => !p.leftover).map((p) => p.name),
+          buy: q.buy || [],
+          dislikes: S.party.map((m) => m.dislikes).filter(Boolean).join("; "),
+          signal,
+        }),
+      });
+      q.recipe = recipe;
+      recipeTicks = new Set();
+      save();
+    } catch (err) {
+      toast(`<span class="n">${esc(err instanceof ClaudeError ? err.message : "The recipe couldn't be written. Try again.")}</span>`);
+      if (!q.recipe) { show("game"); render(); return; }
+    }
+  }
+  renderRecipe(q);
+  try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {}
+}
+
+function ingredientSource(name) {
+  if (S.pack.some((p) => !p.leftover && sameItem(p.name, name))) return ["have", "In your Pack"];
+  const s = S.supplies.find((x) => sameItem(x.name, name));
+  if (s) return s.got ? ["have", "Bought"] : ["buy", "On the shopping list"];
+  return ["check", "Check the cupboard"];
+}
+
+function renderRecipe(q) {
+  const r = q.recipe;
+  const i = S.quests.indexOf(q);
+  const tonight = i === S.day && q.status === "planned";
+  const known = [...new Set([...(q.uses || []), ...(q.buy || [])])];
+  $("#recipe-body").innerHTML = `
+    <button class="btn" id="rc-back">← Back</button>
+    <p class="eyebrow">${tonight ? "Tonight's quest" : `${weekday(dateFor(i), "long")} · ${q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : "Planned"}`}</p>
+    <h2 class="recipe-title">${esc(q.name)}</h2>
+    <div class="q-meta">
+      <span class="chip ${q.diff.toLowerCase()}">${q.diff}</span>
+      <span class="chip">${r ? r.minutes : q.mins} min</span>
+      ${r ? `<span class="chip">Serves ${r.servings}</span>` : ""}
+      ${q.newRecipe ? `<span class="chip new">New recipe</span>` : ""}
+    </div>
+    ${r ? `
+      <section class="recipe-block">
+        <h3>Ingredients</h3>
+        <p class="hint">Tap each one as you get it out.</p>
+        <ul class="ingredients">${r.ingredients.map((g, k) => {
+          const [kind, label] = ingredientSource(g.name);
+          return `<li><button class="ing ${recipeTicks.has(k) ? "ticked" : ""}" data-ing="${k}" aria-pressed="${recipeTicks.has(k)}">
+            <span class="box">${recipeTicks.has(k) ? "✓" : ""}</span>
+            <span class="ing-name"><b>${esc(g.amount)}</b> ${esc(g.name)}</span>
+            <span class="src ${kind}">${label}</span>
+          </button></li>`;
+        }).join("")}</ul>
+      </section>
+      <section class="recipe-block">
+        <h3>Method</h3>
+        <ol class="steps">${r.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
+        ${r.tip ? `<p class="tip"><b>Tip</b> ${esc(r.tip)}</p>` : ""}
+      </section>` : `
+      <section class="recipe-block">
+        <h3>Ingredients</h3>
+        ${known.length ? `<ul class="plain">${known.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : `<p class="hint">No ingredients noted for this dish.</p>`}
+        <p class="hint">Add your Claude API key in Settings and Claude will write out the full recipe, with amounts and the method.</p>
+      </section>`}
+    <div class="row recipe-actions">
+      ${tonight ? (q.newRecipe
+        ? `<button class="btn primary" id="rc-cook">Roll d20 to attempt</button>`
+        : `<button class="btn primary" id="rc-cook">Cooked it</button>`) : ""}
+      ${hasKey() && r ? `<button class="btn" id="rc-rewrite">Write a different version</button>` : ""}
+    </div>`;
+  show("recipe");
+  $("#rc-back").onclick = closeRecipe;
+  $("#recipe-body").querySelectorAll("[data-ing]").forEach((b) => b.onclick = () => {
+    const k = +b.dataset.ing;
+    recipeTicks.has(k) ? recipeTicks.delete(k) : recipeTicks.add(k);
+    renderRecipe(q);
+  });
+  const cook = $("#rc-cook");
+  if (cook) cook.onclick = () => {
+    closeRecipe();
+    if (q.newRecipe) attemptNewRecipe(i);
+    else { completeQuest(i); render(); }
+  };
+  const rewrite = $("#rc-rewrite");
+  if (rewrite) rewrite.onclick = () => openRecipe(q.id, { rewrite: true });
+}
+
+function closeRecipe() {
+  wakeLock?.release?.().catch(() => {});
+  wakeLock = null;
+  recipeTicks = new Set();
+  show("game");
+  render();
 }
 
 /* Supplies */
@@ -1255,6 +1365,7 @@ document.addEventListener("click", (e) => {
     return render();
   }
   if (d.rename) return renameQuest(+d.rename);
+  if (d.recipe) return openRecipe(d.recipe);
   if (d.sup) { toggleSupply(d.sup); return render(); }
   if (d.pack) return togglePick(d.pack);
   if (d.bark) return handleBark(d.bark);

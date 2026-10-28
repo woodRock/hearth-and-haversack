@@ -10,6 +10,7 @@ A meal planner and grocery tracker played as a fantasy campaign. Each week is an
 - **New campaign.** Name your character, pick a class and add the people you cook for, with what they like and dislike.
 - **War council.** Before each week (including the first), pick any dinners you already want, mark busy nights and nights off, add notes, and list what's already in the kitchen. Claude fills in the rest and writes the shopping list. You can ask for something else on any night, or choose your own, before the act begins.
 - **Camp.** Each day shows tonight's dinner, a companion with something to say (sometimes you'll need a Persuasion roll), and what's about to spoil.
+- **Recipes.** Every dinner has a recipe page with amounts and the method. Each ingredient shows whether it's in your Pack, on the shopping list, or something to check the cupboard for. Tick ingredients off as you get them out. The screen stays awake while it's open.
 - **Cook and rest.** Mark tonight's dinner as cooked, then take a Long Rest to move to the next day. Food in your Pack spoils overnight.
 - **New recipes.** Roll a d20 against DC 12. A natural 20 adds the dish to your recipe book.
 - **Supplies.** The week's shopping list, grouped by aisle. Tick items off, or scan the receipt afterwards.
@@ -18,10 +19,11 @@ A meal planner and grocery tracker played as a fantasy campaign. Each week is an
 
 ## Claude features
 
-Two features use Claude:
+Three features use Claude:
 
 - **Receipt scanning.** Take a photo of a receipt and Claude reads every item, its price and roughly how long it keeps. The items go into your Pack and are ticked off your shopping list.
 - **Week planning.** Claude plans the nights you leave blank and works out ingredients for the dinners you pick yourself. It uses what you enter in the war council (picks, busy nights, nights off, notes), your party's likes and dislikes, everything in your Pack (items about to spoil come first), your budget, your unlocked cuisines and your recent dinners. It doesn't see receipts directly: scanned items go into your Pack, and Claude reads the Pack.
+- **Recipes.** The first time you open a dinner's recipe, Claude writes it for your party's size, using what's in your Pack and what was bought for that dish, and avoiding your party's dislikes. The recipe is saved with the dinner, so it costs nothing to open again. You can ask for a different version.
 
 These use your own Claude API key:
 

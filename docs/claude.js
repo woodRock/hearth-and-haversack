@@ -82,6 +82,27 @@ const PLAN_SCHEMA = {
   additionalProperties: false,
 };
 
+const RECIPE_SCHEMA = {
+  type: "object",
+  properties: {
+    servings: { type: "integer" },
+    minutes: { type: "integer" },
+    ingredients: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { name: { type: "string" }, amount: { type: "string" } },
+        required: ["name", "amount"],
+        additionalProperties: false,
+      },
+    },
+    steps: { type: "array", items: { type: "string" } },
+    tip: { type: "string" },
+  },
+  required: ["servings", "minutes", "ingredients", "steps", "tip"],
+  additionalProperties: false,
+};
+
 export class ClaudeError extends Error {}
 
 async function ask({ content, schema, effort, signal }) {
@@ -180,6 +201,27 @@ Rules:
 ${single ? "- Set new_recipe to false unless this is clearly an adventurous dish." : "- Mix easy weeknight meals with one or two bigger cooks. Set new_recipe to true for exactly one adventurous dish you picked (never one they chose)."}
 - approves and disapproves hold names from the household list, based on their likes and dislikes. Leave them empty when nobody has a strong view.
 - ingredients lists only what still needs buying, with a rough cost at a typical supermarket. Use simple names a shopper would recognise.`,
+  });
+}
+
+// Writes the full recipe for one planned dinner, using what's already in the Pack where it fits.
+export function writeRecipe({ dish, eaters, minutes, busy, pack, buy, dislikes, signal }) {
+  return ask({
+    effort: "medium",
+    schema: RECIPE_SCHEMA,
+    signal,
+    content: `Write a home-cooking recipe for "${dish}" for ${eaters.length} ${eaters.length === 1 ? "person" : "people"} (${eaters.join(", ")}).
+
+Aim for about ${minutes} minutes in total${busy ? ", and no more than 30 minutes because it's a busy night" : ""}.
+Already in their kitchen: ${pack.join(", ") || "nothing noted"}.
+Bought for this dinner: ${buy.join(", ") || "nothing specific"}.
+${dislikes ? `Avoid where you can: ${dislikes}.` : ""}
+
+- servings: how many it serves.
+- minutes: total time from start to plate.
+- ingredients: every ingredient, including oil, salt and other basics. name is a plain name, written exactly as it appears in the lists above when it's the same thing. amount uses metric with everyday measures, like "400 g", "2 tbsp" or "1 large".
+- steps: 4 to 10 steps in order, one clear action each, with heat levels and times where they matter.
+- tip: one short, useful tip for this dish, or "" if there's nothing worth adding.`,
   });
 }
 
