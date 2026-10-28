@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=5";
-import * as cloud from "./cloud.js?v=5";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=6";
+import * as cloud from "./cloud.js?v=6";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -557,11 +557,16 @@ function viewCamp() {
 
 function questChips(q) {
   if (q.status === "out") return `<span class="chip status">Night off</span>`;
+  if (q.kind === "leftovers") return `<span class="chip status">${q.status === "done" ? "Eaten" : q.status === "skipped" ? "Skipped" : S.quests[S.day] === q ? "Tonight" : "Planned"}</span><span class="chip">Leftovers night</span>`;
   const status = q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : S.quests[S.day] === q ? "Tonight" : "Planned";
   return `<span class="chip status">${status}</span><span class="chip ${q.diff.toLowerCase()}">${q.diff}</span><span class="chip">${q.mins} min</span>${q.newRecipe ? `<span class="chip new">New recipe</span>` : ""}`;
 }
 function approvalLine(q) {
   if (q.status === "out") return `<p class="q-approve">No cooking tonight. Eat out, order in, or raid the leftovers.</p>`;
+  if (q.kind === "leftovers") {
+    const left = S.pack.filter((p) => p.leftover);
+    return `<p class="q-approve">${left.length ? `In the Pack: ${left.map((p) => `${esc(p.name.replace(/^Leftover /, ""))} ×${p.qty}`).join(", ")}` : "No leftovers in the Pack yet. Raid the fridge."}</p>`;
+  }
   if (q.newRecipe && q.status === "planned") return `<p class="q-approve">Nobody's tried this before. Roll to see how it goes.</p>`;
   const yes = q.yes.length ? `<span class="yes">${q.yes.map(esc).join(", ")} will approve</span>` : "";
   const no = q.no.length ? `<span class="no">${q.no.map(esc).join(", ")} will disapprove</span>` : "";
@@ -569,6 +574,9 @@ function approvalLine(q) {
 }
 function tonightActions(q) {
   const i = S.quests.indexOf(q);
+  if (q.status === "planned" && q.kind === "leftovers") {
+    return `<button class="btn primary" data-eatleft="${i}">We ate leftovers</button><button class="btn" data-act="rest">Long rest</button>`;
+  }
   if (q.status === "planned") {
     const cook = q.newRecipe
       ? `<button class="btn primary" data-roll="${i}">Roll d20 to attempt</button>`
@@ -627,18 +635,146 @@ function completeQuest(i, bonus = 0) {
     if (p) { p.qty -= 1; }
   }
   S.pack = S.pack.filter((p) => p.qty > 0);
-  if (q.diff !== "Easy" || S.perks.includes("Skill: Batch Cook")) {
-    S.pack.push({ id: uid(), name: `Leftover ${q.name}`, qty: 1, spoil: 3, rarity: "uncommon", leftover: true });
-  }
-  q.yes.forEach((n, k) => setTimeout(() => toast(`<span class="y">${esc(n)} approves.</span>`), 400 * (k + 1)));
-  q.no.forEach((n, k) => setTimeout(() => toast(`<span class="n">${esc(n)} disapproves.</span>`), 400 * (q.yes.length + k + 1)));
-  for (const m of S.party) {
-    if (q.yes.includes(m.name)) m.approval = Math.min(100, m.approval + 6);
-    if (q.no.includes(m.name)) m.approval = Math.max(0, m.approval - 4);
-  }
-  if (S.party[0]) S.party[0].approval = Math.min(100, S.party[0].approval + 2);
   logLine(`Cooked ${q.name}.`);
   gainXP(Math.max(5, 40 + bonus + (S.cls === "paladin" ? 10 : 0)), "Quest complete");
+  debrief(q);
+}
+
+/* After-dinner debrief. Anyone left unrated wasn't at dinner, so their approval doesn't move. */
+function debrief(q) {
+  const ratings = {};
+  let again = !!bookEntry(q.name);
+  let leftovers = S.perks.includes("Skill: Batch Cook") ? 2 : 0;
+  modal(`<div class="dialog left debrief"><h3>How was ${esc(q.name)}?</h3>
+    <p>Rate it for each person who ate. Leave someone blank if they weren't there.</p>
+    <div class="raters">${S.party.map((m, k) => `
+      <div class="rater"><span>${esc(m.name)}</span>
+        <div class="thumbs">
+          <button class="thumb" data-rate="${k}" data-v="up" aria-pressed="false" aria-label="${esc(m.name)} liked it">👍</button>
+          <button class="thumb" data-rate="${k}" data-v="down" aria-pressed="false" aria-label="${esc(m.name)} didn't like it">👎</button>
+        </div></div>`).join("")}</div>
+    <label class="class-card again"><input type="checkbox" id="db-again" ${again ? "checked" : ""}>
+      <span><b>Make it again</b><small>Save it to your recipe book so it's easy to pick when planning.</small></span></label>
+    <div class="field"><span>Leftovers</span>
+      <div class="seg" role="group" aria-label="Leftover portions">${[0, 1, 2, 3].map((n) => `<button class="seg-btn" data-left="${n}" aria-pressed="${n === leftovers}">${n === 0 ? "None" : n === 3 ? "3+" : n}</button>`).join("")}</div>
+    </div>
+    <div class="row" style="margin-top:16px"><button class="btn" id="db-skip">Skip</button><button class="btn primary" id="db-save">Record it</button></div></div>`,
+    (root) => {
+      root.querySelectorAll("[data-rate]").forEach((b) => b.onclick = () => {
+        const name = S.party[+b.dataset.rate].name;
+        ratings[name] = ratings[name] === b.dataset.v ? undefined : b.dataset.v;
+        root.querySelectorAll(`[data-rate="${b.dataset.rate}"]`).forEach((x) => x.setAttribute("aria-pressed", ratings[name] === x.dataset.v));
+      });
+      root.querySelectorAll("[data-left]").forEach((b) => b.onclick = () => {
+        leftovers = +b.dataset.left;
+        root.querySelectorAll("[data-left]").forEach((x) => x.setAttribute("aria-pressed", +x.dataset.left === leftovers));
+      });
+      root.querySelector("#db-again").onchange = (e) => { again = e.target.checked; };
+      root.querySelector("#db-skip").onclick = () => { closeModal(); render(); };
+      root.querySelector("#db-save").onclick = () => {
+        closeModal();
+        recordDebrief(q, ratings, again, leftovers);
+        render();
+      };
+    });
+}
+
+function recordDebrief(q, ratings, again, leftovers) {
+  const liked = [], disliked = [], absent = [];
+  for (const m of S.party) {
+    const v = ratings[m.name];
+    if (v === "up") { liked.push(m.name); m.approval = Math.min(100, m.approval + 6); }
+    else if (v === "down") { disliked.push(m.name); m.approval = Math.max(0, m.approval - 5); }
+    else absent.push(m.name);
+  }
+  q.feedback = { liked, disliked, absent, again, leftovers };
+  S.history = [{ dish: q.name, liked, disliked, again }, ...(S.history || [])].slice(0, 30);
+  liked.forEach((n, k) => setTimeout(() => toast(`<span class="y">${esc(n)} approves.</span>`), 350 * (k + 1)));
+  disliked.forEach((n, k) => setTimeout(() => toast(`<span class="n">${esc(n)} disapproves.</span>`), 350 * (liked.length + k + 1)));
+  if (leftovers) addLeftovers(q.name, leftovers);
+  if (again) addToBook(q); else removeFromBook(q.name, { quiet: true });
+  if (liked.length || disliked.length) gainXP(5, "Tale recorded");
+}
+
+function addLeftovers(dish, portions) {
+  const name = `Leftover ${dish.replace(/^Leftover /i, "")}`;
+  const key = stackKey({ name, leftover: true });
+  const have = S.pack.find((p) => stackKey(p) === key);
+  if (have) { have.qty += portions; have.spoil = 3; }
+  else S.pack.push({ id: uid(), name, qty: portions, spoil: 3, rarity: "uncommon", leftover: true });
+  toast(`<span class="g">+${portions} ${esc(name)}</span> in the Pack`);
+}
+
+function addLeftoversByHand() {
+  let portions = 1;
+  modal(`<div class="dialog left"><h3>Add leftovers</h3><p>From a takeaway, a meal out, or a dinner that wasn't on the plan.</p>
+    <form id="al"><input id="al-name" maxlength="50" placeholder="e.g. Pizza, Chilli" aria-label="What's left over" required>
+    <div class="field" style="margin-top:12px"><span>Portions</span>
+      <div class="seg">${[1, 2, 3, 4].map((n) => `<button type="button" class="seg-btn" data-por="${n}" aria-pressed="${n === 1}">${n === 4 ? "4+" : n}</button>`).join("")}</div></div>
+    <div class="row" style="margin-top:16px"><button type="button" class="btn" id="al-x">Cancel</button><button class="btn primary">Add to Pack</button></div></form></div>`,
+    (root) => {
+      root.querySelector("#al-x").onclick = closeModal;
+      root.querySelectorAll("[data-por]").forEach((b) => b.onclick = () => {
+        portions = +b.dataset.por;
+        root.querySelectorAll("[data-por]").forEach((x) => x.setAttribute("aria-pressed", +x.dataset.por === portions));
+      });
+      root.querySelector("#al").onsubmit = (e) => {
+        e.preventDefault();
+        const name = titleCase(root.querySelector("#al-name").value.trim());
+        if (!name) return;
+        closeModal();
+        addLeftovers(name, portions);
+        render();
+      };
+    });
+}
+
+// Leftovers night: choose which leftovers were eaten; each takes one portion from the Pack.
+function eatLeftovers(i) {
+  const q = S.quests[i];
+  const left = S.pack.filter((p) => p.leftover);
+  const finish = (eaten) => {
+    for (const p of eaten) p.qty -= 1;
+    S.pack = S.pack.filter((p) => p.qty > 0);
+    q.status = "done";
+    S.stats.cooked += 1;
+    logLine(eaten.length ? `Leftovers night: ${eaten.map((p) => p.name.replace(/^Leftover /, "")).join(", ")}.` : "Leftovers night.");
+    gainXP(20 + 5 * eaten.length, "Nothing wasted");
+    render();
+  };
+  if (!left.length) { finish([]); return; }
+  modal(`<div class="dialog left"><h3>What did you eat?</h3><p>Each one takes a portion out of the Pack.</p>
+    <div class="loot">${left.map((p, k) => `<label><input type="checkbox" id="el-${k}" checked><span class="nm">${esc(p.name.replace(/^Leftover /, ""))}<small>${p.qty} ${p.qty === 1 ? "portion" : "portions"} · spoils in ${p.spoil}d</small></span></label>`).join("")}</div>
+    <div class="row"><button class="btn" id="el-x">Cancel</button><button class="btn primary" id="el-ok">Done</button></div></div>`,
+    (root) => {
+      root.querySelector("#el-x").onclick = closeModal;
+      root.querySelector("#el-ok").onclick = () => {
+        const eaten = left.filter((_, k) => root.querySelector(`#el-${k}`).checked);
+        closeModal();
+        finish(eaten);
+      };
+    });
+}
+
+/* Recipe book: dinners worth making again, with their recipe when Claude has written one. */
+const bookKey = (name) => norm(name).replace(/\s+/g, " ");
+function bookEntry(name) { return (S.book || []).find((b) => bookKey(b.name) === bookKey(name)); }
+function addToBook(q) {
+  S.book = S.book || [];
+  const have = bookEntry(q.name);
+  if (have) {
+    have.cooked = (have.cooked || 0) + 1;
+    if (q.recipe) have.recipe = q.recipe;
+    return;
+  }
+  S.book.push({ id: uid(), name: q.name, diff: q.diff, mins: q.mins, recipe: q.recipe || null, buy: q.buy || [], uses: q.uses || [], cooked: 1, added: `A${S.act}` });
+  toast(`<span class="g">${esc(q.name)}</span> added to your recipe book`);
+}
+function removeFromBook(name, { quiet = false } = {}) {
+  const have = bookEntry(name);
+  if (!have) return;
+  S.book = S.book.filter((b) => b !== have);
+  if (!quiet) toast(`Removed ${esc(name)} from your recipe book`);
 }
 
 function attemptNewRecipe(i) {
@@ -647,11 +783,10 @@ function attemptNewRecipe(i) {
     title: "Skill check: Cooking", sub: q.name, dc: 12,
     onDone: (r, ok) => {
       let text, bonus;
-      if (r === 20) { text = "Critical success! It goes in the recipe book for good."; bonus = 60; S.perks.push(`Recipe: ${q.name}`); }
+      if (r === 20) { text = "Critical success! It goes in the recipe book for good."; bonus = 60; addToBook(q); }
       else if (ok) { text = "Success. A fine new dish."; bonus = 25; }
       else if (r > 1) { text = "A messy attempt, but everyone ate. That still counts."; bonus = 5; }
       else { text = "Critical fail. You ordered takeaway. Bravery still earns XP."; bonus = -35; }
-      if (ok) q.yes = companions().map((m) => m.name).slice(0, 2);
       q.newRecipe = false;
       completeQuest(i, bonus);
       return { text, button: "Serve it" };
@@ -777,12 +912,17 @@ function openCouncil() {
     <p class="lede" style="margin:-8px 0 0">Choose any dinners you already want, mark busy nights and nights off, and Claude fills in the rest.</p>
     <div class="council-days">${c.days.map((d, i) => {
       const date = dateFor(i);
-      return `<div class="council-day ${d.out ? "is-out" : ""}">
+      const off = d.out || d.leftovers;
+      return `<div class="council-day ${off ? "is-out" : ""}">
         <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
         <div class="cd-main">
-          <input id="cd-req-${i}" maxlength="60" value="${esc(d.request)}" placeholder="${d.out ? "Night off" : "Leave blank for Claude"}" aria-label="Dinner for ${weekday(date, "long")}" ${d.out ? "disabled" : ""}>
+          <div class="cd-input">
+            <input id="cd-req-${i}" maxlength="60" value="${off ? "" : esc(d.request)}" placeholder="${d.out ? "Night off" : d.leftovers ? "Leftovers night" : "Leave blank for Claude"}" aria-label="Dinner for ${weekday(date, "long")}" ${off ? "disabled" : ""}>
+            ${(S.book || []).length && !off ? `<button type="button" class="btn" data-cd-book="${i}" aria-label="Pick from recipe book">Book</button>` : ""}
+          </div>
           <div class="cd-tags">
-            <label class="tag"><input type="checkbox" id="cd-busy-${i}" ${d.busy ? "checked" : ""} ${d.out ? "disabled" : ""}>Busy night</label>
+            <label class="tag"><input type="checkbox" id="cd-busy-${i}" ${d.busy ? "checked" : ""} ${off ? "disabled" : ""}>Busy night</label>
+            <label class="tag"><input type="checkbox" id="cd-left-${i}" ${d.leftovers ? "checked" : ""}>Leftovers</label>
             <label class="tag"><input type="checkbox" id="cd-out-${i}" ${d.out ? "checked" : ""}>Night off</label>
           </div>
         </div>
@@ -807,34 +947,43 @@ function openCouncil() {
   show("council");
   const read = () => {
     c.days.forEach((d, i) => {
-      d.request = $(`#cd-req-${i}`).value.trim();
+      if (!$(`#cd-req-${i}`).disabled) d.request = $(`#cd-req-${i}`).value.trim();
       d.busy = $(`#cd-busy-${i}`).checked;
       d.out = $(`#cd-out-${i}`).checked;
+      d.leftovers = $(`#cd-left-${i}`).checked;
     });
     c.notes = $("#cd-notes").value.trim();
     c.kitchen = $("#cd-kitchen").value.trim();
     save();
   };
   $("#council-body").onchange = (e) => {
+    const m = /^cd-(out|left)-(\d+)$/.exec(e.target.id || "");
+    // A night is either off or a leftovers night, not both.
+    if (m && e.target.checked) $(`#cd-${m[1] === "out" ? "left" : "out"}-${m[2]}`).checked = false;
     read();
-    if (e.target.id?.startsWith("cd-out-")) openCouncil();
+    if (m) openCouncil();
   };
+  $("#council-body").querySelectorAll("[data-cd-book]").forEach((b) => b.onclick = () => {
+    read();
+    pickFromBook((entry) => { c.days[+b.dataset.cdBook].request = entry.name; save(); openCouncil(); });
+  });
   $("#cd-scan").onclick = () => { read(); scanReceipt(); };
   $("#cd-plan").onclick = async () => {
     read();
     addKitchenToPack(c);
     if (!hasKey()) {
-      const missing = c.days.filter((d) => !d.out && !d.request).length;
-      if (missing) { toast(`<span class="n">Name a dinner for every night, or mark it as a night off.</span>`); return; }
-      c.days.forEach((d) => { if (!d.out) d.quest = manualQuest(d.request, d.busy); });
+      const missing = c.days.filter((d) => !d.out && !d.leftovers && !d.request).length;
+      if (missing) { toast(`<span class="n">Name a dinner for every night, or mark it as leftovers or a night off.</span>`); return; }
+      c.days.forEach((d) => { if (!d.out && !d.leftovers) d.quest = manualQuest(d.request, d.busy); });
       c.reviewed = true; save(); renderReview(); return;
     }
-    const cook = c.days.map((d, i) => ({ d, i })).filter(({ d }) => !d.out);
-    if (!cook.length) { toast("Every night is a night off. Enjoy the week!"); }
+    const cook = c.days.map((d, i) => ({ d, i })).filter(({ d }) => !d.out && !d.leftovers);
+    const leftoverNights = c.days.map((d, i) => d.leftovers ? dayInfo(d, i).label : null).filter(Boolean);
+    if (!cook.length) { toast("No cooking this week. Enjoy it!"); }
     try {
       const plan = cook.length ? await loading({
         title: `Act ${S.act}`, sub: "Claude is consulting the old recipe books…", min: 1500, cancellable: true,
-        task: (signal) => planDays({ ...planContext(), days: cook.map(({ d, i }) => dayInfo(d, i)), signal }),
+        task: (signal) => planDays({ ...planContext(), leftoverNights, days: cook.map(({ d, i }) => dayInfo(d, i)), signal }),
       }) : { quests: [] };
       cook.forEach(({ d }, k) => { d.quest = plan.quests[k] ? fromPlan(plan.quests[k]) : manualQuest(d.request || "Cook's Choice", d.busy); });
       c.reviewed = true; save(); renderReview();
@@ -858,7 +1007,20 @@ function planContext() {
     party: S.party.map(({ name, likes, dislikes }) => ({ name, likes, dislikes })),
     pack: S.pack.map(({ name, qty, spoil }) => ({ name, qty, spoil })),
     perks: S.perks, recent: S.recent, notes: S.council.notes, budget: S.budget,
+    history: (S.history || []).slice(0, 15),
+    favourites: (S.book || []).map((b) => b.name),
   };
+}
+
+function pickFromBook(onPick) {
+  const book = S.book || [];
+  modal(`<div class="dialog left"><h3>Recipe book</h3><p>Pick a dish to put on the menu.</p>
+    <div class="choices">${book.map((b) => `<button class="choice" data-pick="${b.id}"><b>${esc(b.name)}</b><small>${b.diff} · ${b.mins} min · cooked ${b.cooked || 1}×</small></button>`).join("")}</div>
+    <div class="row" style="margin-top:14px"><button class="btn" id="pb-x">Cancel</button></div></div>`,
+    (root) => {
+      root.querySelector("#pb-x").onclick = closeModal;
+      root.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => { closeModal(); onPick(book.find((x) => x.id === b.dataset.pick)); });
+    });
 }
 const dayInfo = (d, i) => ({ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: d.request, busy: d.busy });
 
@@ -887,7 +1049,7 @@ function renderReview() {
       return `<article class="quest ${d.out ? "out" : ""}">
         <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
         <div class="q-body">
-          ${d.out ? `<p class="q-title">Night off</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button></div>` : `
+          ${d.out || d.leftovers ? `<p class="q-title">${d.out ? "Night off" : "Leftovers night"}</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button></div>` : `
           <p class="q-title">${esc(q?.name || "Cook's Choice")}</p>
           <div class="q-meta"><span class="chip ${(q?.diff || "Easy").toLowerCase()}">${q?.diff || "Easy"}</span><span class="chip">${q?.mins || 40} min</span>${q?.newRecipe ? `<span class="chip new">New recipe</span>` : ""}${d.request ? `<span class="chip status">Your pick</span>` : ""}</div>
           <p class="q-approve">${(q?.ingredients || []).length ? `Needs: ${esc(q.ingredients.map((g) => g.name).join(", "))}` : "Nothing to buy for this one yet."}</p>
@@ -911,6 +1073,7 @@ function renderReview() {
   $("#council-body").querySelectorAll("[data-rv-cook]").forEach((b) => b.onclick = () => {
     const d = c.days[+b.dataset.rvCook];
     d.out = false;
+    d.leftovers = false;
     if (!d.quest) d.quest = manualQuest(d.request || "Cook's Choice", d.busy);
     save(); renderReview();
   });
@@ -942,11 +1105,13 @@ async function rerollDay(i, request = "") {
 function chooseOwn(i) {
   const d = councilDays().days[i];
   modal(`<div class="dialog left"><h3>Your choice</h3><p>What's for dinner on ${weekday(dateFor(i), "long")}?</p>
+    ${(S.book || []).length ? `<div class="cd-tags" style="margin-bottom:10px">${S.book.slice(0, 8).map((b) => `<button type="button" class="tag" data-own-book="${esc(b.name)}">${esc(b.name)}</button>`).join("")}</div>` : ""}
     <form id="own"><input id="own-name" maxlength="60" value="${esc(d.request || d.quest?.name || "")}" aria-label="Dish name">
     <div class="row" style="margin-top:14px"><button type="button" class="btn" id="own-x">Cancel</button><button class="btn primary">Save</button></div></form>
     ${hasKey() ? `<p class="hint" style="margin:12px 0 0">Claude will work out the ingredients for it.</p>` : ""}</div>`,
     (root) => {
       root.querySelector("#own-x").onclick = closeModal;
+      root.querySelectorAll("[data-own-book]").forEach((b) => b.onclick = () => { root.querySelector("#own-name").value = b.dataset.ownBook; });
       root.querySelector("#own").onsubmit = (e) => {
         e.preventDefault();
         const v = root.querySelector("#own-name").value.trim();
@@ -962,8 +1127,10 @@ async function finishCouncil() {
   const c = councilDays();
   S.quests = c.days.map((d) => d.out
     ? { id: uid(), name: "Night off", diff: "Easy", mins: 0, newRecipe: false, status: "out", yes: [], no: [], uses: [] }
-    : { id: uid(), ...d.quest, status: "planned", buy: (d.quest.ingredients || []).map((g) => g.name), ingredients: undefined });
-  S.supplies = suppliesFrom(c.days.filter((d) => !d.out && d.quest).map((d) => ({ name: d.quest.name, ingredients: d.quest.ingredients || [] })));
+    : d.leftovers
+    ? { id: uid(), name: "Leftovers night", kind: "leftovers", diff: "Easy", mins: 10, newRecipe: false, status: "planned", yes: [], no: [], uses: [] }
+    : { id: uid(), ...d.quest, status: "planned", buy: (d.quest.ingredients || []).map((g) => g.name), ingredients: undefined, recipe: bookEntry(d.quest.name)?.recipe || null });
+  S.supplies = suppliesFrom(c.days.filter((d) => !d.out && !d.leftovers && d.quest).map((d) => ({ name: d.quest.name, ingredients: d.quest.ingredients || [] })));
   // Supplies already gathered (e.g. a receipt scanned during planning) start ticked.
   for (const s of S.supplies) if (S.pack.some((p) => !p.leftover && sameItem(p.name, s.name))) s.got = true;
   await beginAct(hasKey() ? "The war council planned the week with Claude" : "The week was planned by hand");
@@ -976,14 +1143,19 @@ function viewQuests() {
     <p class="eyebrow">Act ${S.act} · Week of ${dateFor(0).toLocaleDateString(undefined, { day: "numeric", month: "long" })}</p>
     <h2 class="view-title">Quest Log</h2>
     <p class="lede">${done} of 7 dinners conquered.</p>
+    <button class="scan" data-act="book">
+      <svg viewBox="0 0 24 24"><path d="M4 4h7a3 3 0 0 1 3 3v13a2 2 0 0 0-2-2H4z"/><path d="M20 4h-4a2 2 0 0 0-2 2"/><path d="M20 4v14h-6"/></svg>
+      <span><b>Recipe Book</b><small>${(S.book || []).length ? `${S.book.length} ${S.book.length === 1 ? "dish" : "dishes"} saved to make again` : "Dishes you mark to make again end up here"}</small></span>
+    </button>
     <div class="quests">
       ${S.quests.map((q, i) => {
         const d = dateFor(i);
         const today = i === S.day;
         let actions = "";
         if (today && q.status === "planned") actions = tonightActions(q);
+        else if (i > S.day && q.status === "planned" && q.kind === "leftovers") actions = `<button class="btn" data-totonight="${i}">Make it tonight</button>`;
         else if (i > S.day && q.status === "planned") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button><button class="btn" data-totonight="${i}">Make it tonight</button><button class="btn" data-rename="${i}">Change dish</button>`;
-        else if (q.status === "done" || q.status === "skipped") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button>`;
+        else if ((q.status === "done" || q.status === "skipped") && q.kind !== "leftovers") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button>`;
         return `<article class="quest ${today ? "today" : ""} ${q.status}">
           <div class="day"><span>${weekday(d)}</span><b>${d.getDate()}</b></div>
           <div class="q-body">
@@ -1019,9 +1191,13 @@ function renameQuest(i) {
 let recipeTicks = new Set();
 let wakeLock = null;
 
+const findDish = (id) => S.quests.find((x) => x.id === id) || (S.book || []).find((b) => b.id === id);
+
 async function openRecipe(id, { rewrite = false } = {}) {
-  const q = S.quests.find((x) => x.id === id);
+  const q = findDish(id);
   if (!q) return;
+  const saved = bookEntry(q.name);
+  if (!q.recipe && !rewrite && saved?.recipe) q.recipe = saved.recipe;
   if ((!q.recipe || rewrite) && hasKey()) {
     try {
       const recipe = await loading({
@@ -1036,6 +1212,7 @@ async function openRecipe(id, { rewrite = false } = {}) {
         }),
       });
       q.recipe = recipe;
+      if (saved && (rewrite || !saved.recipe)) saved.recipe = recipe;
       recipeTicks = new Set();
       save();
     } catch (err) {
@@ -1057,11 +1234,13 @@ function ingredientSource(name) {
 function renderRecipe(q) {
   const r = q.recipe;
   const i = S.quests.indexOf(q);
+  const inBook = i < 0;
+  const saved = bookEntry(q.name);
   const tonight = i === S.day && q.status === "planned";
   const known = [...new Set([...(q.uses || []), ...(q.buy || [])])];
   $("#recipe-body").innerHTML = `
-    <button class="btn" id="rc-back">← Back</button>
-    <p class="eyebrow">${tonight ? "Tonight's quest" : `${weekday(dateFor(i), "long")} · ${q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : "Planned"}`}</p>
+    <button class="btn" id="rc-back">← ${inBook ? "Recipe book" : "Back"}</button>
+    <p class="eyebrow">${inBook ? `Recipe book · cooked ${q.cooked || 1} ${q.cooked === 1 || !q.cooked ? "time" : "times"}` : tonight ? "Tonight's quest" : `${weekday(dateFor(i), "long")} · ${q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : "Planned"}`}</p>
     <h2 class="recipe-title">${esc(q.name)}</h2>
     <div class="q-meta">
       <span class="chip ${q.diff.toLowerCase()}">${q.diff}</span>
@@ -1097,9 +1276,14 @@ function renderRecipe(q) {
         ? `<button class="btn primary" id="rc-cook">Roll d20 to attempt</button>`
         : `<button class="btn primary" id="rc-cook">Cooked it</button>`) : ""}
       ${hasKey() && r ? `<button class="btn" id="rc-rewrite">Write a different version</button>` : ""}
+      ${saved ? `<button class="btn danger" id="rc-unbook">Remove from recipe book</button>` : `<button class="btn" id="rc-book">Save to recipe book</button>`}
     </div>`;
   show("recipe");
-  $("#rc-back").onclick = closeRecipe;
+  $("#rc-back").onclick = inBook ? openBook : closeRecipe;
+  const book = $("#rc-book");
+  if (book) book.onclick = () => { addToBook(q); save(); renderRecipe(q); };
+  const unbook = $("#rc-unbook");
+  if (unbook) unbook.onclick = () => { removeFromBook(q.name); save(); if (inBook) openBook(); else renderRecipe(q); };
   $("#recipe-body").querySelectorAll("[data-ing]").forEach((b) => b.onclick = () => {
     const k = +b.dataset.ing;
     recipeTicks.has(k) ? recipeTicks.delete(k) : recipeTicks.add(k);
@@ -1113,6 +1297,26 @@ function renderRecipe(q) {
   };
   const rewrite = $("#rc-rewrite");
   if (rewrite) rewrite.onclick = () => openRecipe(q.id, { rewrite: true });
+}
+
+function openBook() {
+  const book = [...(S.book || [])].sort((a, b) => (b.cooked || 0) - (a.cooked || 0) || a.name.localeCompare(b.name));
+  $("#recipe-body").innerHTML = `
+    <button class="btn" id="rc-back">← Back</button>
+    <p class="eyebrow">${book.length} ${book.length === 1 ? "dish" : "dishes"}</p>
+    <h2 class="recipe-title">Recipe Book</h2>
+    <p class="lede">Dinners you've marked to make again. Pick them on the planning screen to put them back on the menu.</p>
+    ${book.length ? `<div class="quests">${book.map((b) => `
+      <button class="quest book-entry" data-open="${b.id}">
+        <div class="q-body">
+          <p class="q-title">${esc(b.name)}</p>
+          <div class="q-meta"><span class="chip ${b.diff.toLowerCase()}">${b.diff}</span><span class="chip">${b.mins} min</span><span class="chip">Cooked ${b.cooked || 1}×</span>${b.recipe ? "" : `<span class="chip">No recipe yet</span>`}</div>
+        </div>
+      </button>`).join("")}</div>`
+    : `<div class="empty">Your recipe book is empty. After dinner, tick <b>Make it again</b> to save a dish here.</div>`}`;
+  show("recipe");
+  $("#rc-back").onclick = closeRecipe;
+  $("#recipe-body").querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openRecipe(b.dataset.open));
 }
 
 function closeRecipe() {
@@ -1211,10 +1415,10 @@ function viewPack() {
     </div>
     <div class="alchemy">
       <h3>Leftover Alchemy</h3>
-      <p>${leftovers.length ? "Pick two or more leftovers or soon-to-spoil items and combine them into a meal." : "Nothing at risk right now. Bigger dinners leave leftovers here."}</p>
+      <p>${leftovers.length ? "Pick two or more leftovers or soon-to-spoil items and combine them into a meal." : "Nothing at risk right now. Leftovers you record after dinner show up here."}</p>
       <div class="row">
         <button class="btn primary" data-act="brew" ${picked.length >= 2 ? "" : "disabled"}>Combine ${picked.length >= 2 ? picked.length + " items" : ""}</button>
-        <button class="btn" data-act="scan">Scan a receipt</button>
+        <button class="btn" data-act="addleft">Add leftovers</button>
       </div>
     </div>
   </section>`;
@@ -1372,6 +1576,9 @@ document.addEventListener("click", (e) => {
   if (d.act === "rest") return askRest();
   if (d.act === "scan") return scanReceipt();
   if (d.act === "brew") return brew();
+  if (d.act === "book") return openBook();
+  if (d.act === "addleft") return addLeftoversByHand();
+  if (d.eatleft) return eatLeftovers(+d.eatleft);
   if (t.id === "open-menu") { save(); renderMenu(); }
 });
 

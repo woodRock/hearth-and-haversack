@@ -160,6 +160,27 @@ textarea {
 .loading-tip { font-family: var(--ui); font-size: 14px; color: var(--muted); max-width: 40ch; margin: 22px 0 0; }
 .loading-tip b { color: var(--gold); letter-spacing: .12em; text-transform: uppercase; font-size: 11px; margin-right: 6px; }
 
+/* Debrief, recipe book, leftovers */
+.raters { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 6px; margin-bottom: 14px; }
+.rater { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; }
+.rater + .rater { border-top: 1px solid var(--line); }
+.rater > span { font-weight: 500; color: var(--fg); min-width: 0; overflow-wrap: anywhere; }
+.thumbs { display: flex; gap: 6px; flex: none; }
+.thumb { width: 44px; height: 40px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-2); font-size: 18px; filter: grayscale(1); opacity: .55; }
+.thumb[aria-pressed="true"] { filter: none; opacity: 1; border-color: var(--gold); background: color-mix(in srgb, var(--gold) 18%, var(--panel-2)); }
+.debrief .again { margin-bottom: 14px; }
+.debrief .again b { font-size: 17px; }
+.seg { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg-btn { padding: 9px 4px; border: 0; background: var(--panel-2); font-family: var(--ui); font-weight: 700; color: var(--muted); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn[aria-pressed="true"] { background: var(--gold); color: var(--ink); }
+.cd-input { display: flex; gap: 6px; }
+.cd-input input { flex: 1; }
+.cd-input .btn { padding: 8px 10px; }
+button.tag { background: none; }
+.book-entry { width: 100%; text-align: left; grid-template-columns: 1fr; color: var(--fg); }
+.book-entry:hover { border-color: var(--gold-dim); }
+
 /* Recipe */
 .recipe-screen { padding-block: 16px calc(40px + env(safe-area-inset-bottom, 0px)); background: var(--bg); min-height: 100vh; }
 .recipe-inner { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }

@@ -167,7 +167,17 @@ Skip taxes, totals, bag fees, loyalty and payment lines. store is the shop name 
 
 // days: the nights to cook, in order: [{ label: "Mon 3 Nov", request: "Tacos" | "", busy: bool }].
 // Returns { quests } with exactly one dinner per day, in the same order.
-export function planDays({ days, party, pack, perks, recent, notes, budget, signal }) {
+export function planDays({ days, party, pack, perks, recent, notes, budget, history = [], favourites = [], leftoverNights = [], signal }) {
+  const historyText = history
+    .map((h) => {
+      const bits = [];
+      if (h.liked.length) bits.push(`${h.liked.join(", ")} liked it`);
+      if (h.disliked.length) bits.push(`${h.disliked.join(", ")} didn't`);
+      if (h.again) bits.push("they want it again");
+      return bits.length ? `- ${h.dish}: ${bits.join("; ")}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
   const partyText = party
     .map((m) => `- ${m.name}${m.likes ? `, likes ${m.likes}` : ""}${m.dislikes ? `, dislikes ${m.dislikes}` : ""}`)
     .join("\n");
@@ -189,6 +199,11 @@ ${partyText || "- Just one person, no stated preferences."}
 Already in the fridge and pantry:
 ${packText || "- Nothing noted."}
 
+How recent dinners went (only people who ate are listed):
+${historyText || "- No feedback yet."}
+
+Their recipe book (dishes they've saved to make again): ${favourites.join(", ") || "empty"}.
+${leftoverNights.length ? `Leftovers nights, with no cooking: ${leftoverNights.join(", ")}. Make the dinner the night before each one generous enough to leave leftovers.\n` : ""}
 Their notes for this week: ${notes || "none"}
 Weekly food budget: about ${budget} in their local currency, for everything on the list.
 Cuisines and skills unlocked: ${perks.join(", ") || "none yet"}.
@@ -197,6 +212,7 @@ Dinners to avoid repeating: ${recent.join(", ") || "none"}.
 Rules:
 - Where they've chosen a dish, keep their dish and its name as they wrote it (tidy the capitalisation) and fill in its details and ingredients.
 - Busy nights take 30 minutes or less.
+- Lean towards what went down well and away from what people disliked. You may bring back a recipe-book dish now and then, but most nights should be new.
 - Use up items that spoil soon on the earliest nights. List those under uses_from_pack using their exact names from the pantry list.
 ${single ? "- Set new_recipe to false unless this is clearly an adventurous dish." : "- Mix easy weeknight meals with one or two bigger cooks. Set new_recipe to true for exactly one adventurous dish you picked (never one they chose)."}
 - approves and disapproves hold names from the household list, based on their likes and dislikes. Leave them empty when nobody has a strong view.
