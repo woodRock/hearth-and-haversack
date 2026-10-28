@@ -48,6 +48,45 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z ]/g, "").replace(/(es|s)\b/g, "").trim();
 const sameItem = (a, b) => { const x = norm(a), y = norm(b); return x && y && (x === y || x.includes(y) || y.includes(x)); };
+const titleCase = (s) => s.replace(/\b\w/g, (m) => m.toUpperCase());
+const clampQty = (n) => Math.min(99, Math.max(1, parseInt(n, 10) || 1));
+
+// Reads an amount typed with an item: "Soup x5", "Soup × 5", "Soup (5)", "5 x Soup", "5 soups".
+function splitQty(text) {
+  const t = String(text).trim().replace(/\s+/g, " ");
+  let m = t.match(/^(.+?)\s*(?:[x×*]\s*(\d+)|\((\d+)\))$/i);
+  if (m) return { name: m[1].trim(), qty: clampQty(m[2] || m[3]) };
+  m = t.match(/^(\d+)\s*(?:[x×*]\s*)?\s(.+)$/i) || t.match(/^(\d+)\s*[x×*]\s*(.+)$/i);
+  if (m) return { name: m[2].trim(), qty: clampQty(m[1]) };
+  return { name: t, qty: 1 };
+}
+
+// Pack items stack when they're the same thing: same name ignoring case and plurals.
+const stackKey = (p) => (p.leftover ? "leftover:" : "") + norm(p.name).replace(/\s+/g, " ");
+
+// Splits amounts out of item names and merges duplicates into one stack.
+// Returns true if anything changed, so callers know to save the repair.
+function tidyPack(st) {
+  if (!Array.isArray(st?.pack)) return false;
+  let changed = false;
+  const stacks = new Map();
+  for (const p of st.pack) {
+    const { name, qty } = splitQty(p.name);
+    if (qty > 1 || name !== p.name) {
+      p.name = titleCase(name);
+      p.qty = (Number(p.qty) || 1) * qty;
+      changed = true;
+    }
+    const key = stackKey(p);
+    const have = stacks.get(key);
+    if (!have) { stacks.set(key, p); continue; }
+    have.qty += Number(p.qty) || 1;
+    if (p.spoil) have.spoil = have.spoil ? Math.min(have.spoil, p.spoil) : p.spoil;
+    changed = true;
+  }
+  if (changed) st.pack = [...stacks.values()];
+  return changed;
+}
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const gold = (n) => `${Math.round(n)}g`;
@@ -76,7 +115,11 @@ function save() {
   cloud.saveCloud(S);
 }
 function loadSave() {
-  try { const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  let st = null;
+  try { const raw = localStorage.getItem(SAVE_KEY); st = raw ? JSON.parse(raw) : null; } catch { return null; }
+  // Repair in place without touching savedAt, so it never looks like a newer campaign than the account's.
+  if (tidyPack(st)) storeLocal(st);
+  return st;
 }
 function storeLocal(state) {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch {}
@@ -116,6 +159,7 @@ async function onSignedIn() {
   } else if (local) {
     S = local; save(); cloud.flush();
   }
+  if (tidyPack(S)) { save(); cloud.flush(); }
   unwatch();
   unwatch = cloud.watchCloud(applyRemote);
   refreshScreen();
@@ -125,7 +169,7 @@ function applyRemote(remote) {
   if (remote.apiKey && remote.apiKey !== getKey()) setKey(remote.apiKey);
   if (!remote.state || (S && remote.savedAt <= (S.savedAt || 0))) return;
   S = remote.state;
-  storeLocal(S);
+  if (tidyPack(S)) save(); else storeLocal(S);
   if (!modalOpen) { toast("Synced from your other device"); refreshScreen(); }
 }
 
@@ -802,9 +846,9 @@ function openCouncil() {
 
 function addKitchenToPack(c) {
   if (!c.kitchen) return;
-  for (const name of c.kitchen.split(",").map((s) => s.trim()).filter(Boolean)) {
-    const tidy = name.replace(/\b\w/g, (m) => m.toUpperCase());
-    if (!S.pack.some((p) => sameItem(p.name, tidy))) S.pack.push({ id: uid(), name: tidy, qty: 1, spoil: null, rarity: "common" });
+  for (const entry of c.kitchen.split(/[,\n;]/).map((s) => s.trim()).filter(Boolean)) {
+    const { name, qty } = splitQty(entry);
+    addToPack({ name: titleCase(name), qty, aisle: "Larder", price: 0, spoil: null });
   }
   c.kitchen = "";
 }
@@ -1024,7 +1068,8 @@ function checkSuppliesCleared() {
 }
 
 function addToPack({ name, qty, aisle, price, spoil }) {
-  const have = S.pack.find((p) => !p.leftover && sameItem(p.name, name));
+  const key = stackKey({ name });
+  const have = S.pack.find((p) => stackKey(p) === key);
   if (have) {
     have.qty += qty;
     if (spoil) have.spoil = have.spoil ? Math.max(have.spoil, spoil) : spoil;
