@@ -20,7 +20,7 @@ A meal planner and grocery tracker played as a fantasy campaign. Each week is an
 - **Leftovers.** Mark any night as a **Leftovers night** when planning (Claude makes the dinner before it a bit bigger). On the night, choose which leftovers you ate. You can also add leftovers by hand from the Pack, for example after a takeaway.
 - **New recipes.** Roll a d20 against DC 12. A natural 20 adds the dish to your recipe book.
 - **Supplies.** The week's shopping list, grouped by aisle. Tick items off, or scan the receipt afterwards.
-- **Pack.** Your fridge and pantry as an inventory grid. Combine leftovers before they spoil.
+- **Pack.** Your fridge and pantry as an inventory grid. Tap items to select them, then **Mark as eaten** for anything eaten on its own (a bag of chips, a lunch, a leftover), choosing how many of each. Select two or more to combine them into a meal.
 - **Act complete.** At the end of the week you see how it went, earn bonus XP for staying under budget and wasting nothing, then hold the next war council.
 
 ## Claude features

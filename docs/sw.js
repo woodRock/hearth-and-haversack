@@ -2,9 +2,9 @@
 // served from the cache when there isn't. Pinned library versions from the CDNs
 // never change, so they're served from the cache first.
 // Claude and Firebase requests are never cached; Firestore has its own offline cache.
-const VERSION = "hh-v7";
+const VERSION = "hh-v8";
 const SHELL = [
-  "./", "index.html", "styles.css?v=7", "app.js?v=7", "claude.js?v=7", "cloud.js?v=7",
+  "./", "index.html", "styles.css?v=8", "app.js?v=8", "claude.js?v=8", "cloud.js?v=8",
   "manifest.webmanifest", "icon.svg",
 ];
 const PINNED_HOSTS = ["cdn.jsdelivr.net", "www.gstatic.com", "fonts.googleapis.com", "fonts.gstatic.com"];

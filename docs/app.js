@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=7";
-import * as cloud from "./cloud.js?v=7";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=8";
+import * as cloud from "./cloud.js?v=8";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -1687,7 +1687,7 @@ function viewPack() {
   return `<section class="panel">
     <p class="eyebrow">Fridge, freezer &amp; larder</p>
     <h2 class="view-title">Pack</h2>
-    <p class="lede">${S.pack.length} items carried. Red numbers are days until something spoils.</p>
+    <p class="lede">${S.pack.length} items carried. Red numbers are days until something spoils. Tap items to select them.</p>
     ${S.pack.length ? `<div class="grid">${S.pack.map((p) => `
       <button class="slot ${picked.includes(p.id) ? "pick" : ""}" style="--rc:var(--r-${p.rarity})" data-pack="${p.id}" aria-pressed="${picked.includes(p.id)}" title="${esc(p.name)}">
         ${p.spoil && p.spoil <= 3 ? `<span class="spoil">${p.spoil}d</span>` : ""}
@@ -1704,19 +1704,21 @@ function viewPack() {
     </div>
     <div class="alchemy">
       <h3>Leftover Alchemy</h3>
-      <p>${leftovers.length ? "Pick two or more leftovers or soon-to-spoil items and combine them into a meal." : "Nothing at risk right now. Leftovers you record after dinner show up here."}</p>
-      <div class="row">
-        <button class="btn primary" data-act="brew" ${picked.length >= 2 ? "" : "disabled"}>Combine ${picked.length >= 2 ? picked.length + " items" : ""}</button>
-        <button class="btn" data-act="addleft">Add leftovers</button>
-      </div>
+      <p>${leftovers.length ? "Select two or more leftovers or soon-to-spoil items and combine them into a meal." : "Nothing at risk right now. Leftovers you record after dinner show up here."}</p>
+      <div class="row"><button class="btn" data-act="addleft">Add leftovers</button></div>
     </div>
+    ${picked.length ? `<div class="pick-bar" role="toolbar" aria-label="Selected items">
+      <span>${picked.length} selected</span>
+      <button class="btn" data-act="unpick">Clear</button>
+      ${picked.length >= 2 ? `<button class="btn" data-act="brew">Combine</button>` : ""}
+      <button class="btn primary" data-act="eat">Mark as eaten</button>
+    </div>` : ""}
   </section>`;
 }
 
 function togglePick(id) {
   const p = S.pack.find((x) => x.id === id);
   if (!p) return;
-  if (!(p.leftover || (p.spoil && p.spoil <= 2))) { toast(`${esc(p.name)} keeps for now. Pick leftovers or items about to spoil.`); return; }
   picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
   render();
 }
@@ -1733,6 +1735,42 @@ function brew() {
   toast(`Brewed <span class="g">${esc(dish)}</span>`);
   gainXP((S.cls === "mage" ? 2 : 1) * 15 * items.length, "Nothing wasted");
   render();
+}
+
+// Eaten on its own (a snack, lunch, a leftover): choose how many of each selected item went.
+function eatPicked() {
+  const rows = picked.map((id) => S.pack.find((p) => p.id === id)).filter(Boolean).map((p) => ({ p, n: 1 }));
+  if (!rows.length) return;
+  const unit = (p, n) => p.leftover ? (n === 1 ? "portion" : "portions") : "";
+  modal(`<div class="dialog left"><h3>What was eaten?</h3><p>Each one comes out of the Pack.</p>
+    <div class="raters">${rows.map((r, k) => `
+      <div class="rater"><span>${esc(r.p.name)} <small class="hint">of ${r.p.qty} ${unit(r.p, r.p.qty)}</small></span>
+        <div class="stepper"><button class="thumb" data-eat="${k}" data-d="-1" aria-label="One fewer ${esc(r.p.name)}">−</button><b id="eat-${k}">1</b><button class="thumb" data-eat="${k}" data-d="1" aria-label="One more ${esc(r.p.name)}">+</button></div>
+      </div>`).join("")}</div>
+    <div class="row" style="margin-top:16px"><button class="btn" id="eat-x">Cancel</button><button class="btn primary" id="eat-ok">Eaten</button></div></div>`,
+    (root) => {
+      root.querySelectorAll("[data-eat]").forEach((b) => b.onclick = () => {
+        const r = rows[+b.dataset.eat];
+        r.n = Math.min(r.p.qty, Math.max(0, r.n + +b.dataset.d));
+        root.querySelector(`#eat-${b.dataset.eat}`).textContent = r.n;
+      });
+      root.querySelector("#eat-x").onclick = closeModal;
+      root.querySelector("#eat-ok").onclick = () => {
+        closeModal();
+        const eaten = rows.filter((r) => r.n > 0);
+        for (const r of eaten) r.p.qty -= r.n;
+        S.pack = S.pack.filter((p) => p.qty > 0);
+        picked = [];
+        if (eaten.length) {
+          logLine(`Ate ${eaten.map((r) => (r.n > 1 ? `${r.n} × ` : "") + r.p.name.replace(/^Leftover /, "")).join(", ")}.`);
+          // Eating something before it goes off still counts as nothing wasted.
+          const saved = eaten.filter((r) => r.p.leftover || (r.p.spoil && r.p.spoil <= 2)).length;
+          if (saved) gainXP(5 * saved, "Nothing wasted");
+          else toast(`Taken out of the Pack`);
+        }
+        render();
+      };
+    });
 }
 
 /* Party */
@@ -1866,6 +1904,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "rest") return askRest();
   if (d.act === "scan") return scanReceipt();
   if (d.act === "brew") return brew();
+  if (d.act === "eat") return eatPicked();
+  if (d.act === "unpick") { picked = []; return render(); }
   if (d.act === "book") return openBook();
   if (d.act === "replan") return startReplan();
   if (d.act === "addleft") return addLeftoversByHand();

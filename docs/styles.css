@@ -369,6 +369,12 @@ h2.view-title { font-family: var(--display); font-weight: 400; font-size: 27px; 
 .alchemy { border: 1px dashed var(--gold-dim); border-radius: 6px; padding: 14px; background: var(--panel); }
 .alchemy h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 400; font-size: 20px; }
 .alchemy p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
+.pick-bar {
+  position: sticky; bottom: calc(76px + env(safe-area-inset-bottom, 0px)); z-index: 5; margin-top: 14px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px;
+  background: #0f0b08; border: 1px solid var(--gold-dim); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+}
+.pick-bar span { font-family: var(--ui); font-size: 14px; color: var(--gold); margin-right: auto; }
 .empty { padding: 20px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 6px; }
 
 /* Party */
