@@ -1,0 +1,651 @@
+<title>Hearth &amp; Haversack</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=Alegreya+Sans:wght@400;500;700&display=swap">
+<style>
+/* Layout: a phone-first camp ledger. Sticky character header, one scrolling panel per tab, fixed bottom tab bar. Single dark "campfire" look by choice. */
+:root {
+  --bg: #16110d;
+  --panel: #211912;
+  --panel-2: #2b2118;
+  --line: #463627;
+  --fg: #ecdfc6;
+  --muted: #a6957a;
+  --gold: #d6a94c;
+  --gold-dim: #8a6a2c;
+  --ember: #c2563f;
+  --moss: #7fa66a;
+  --r-common: #9b8f7d;
+  --r-uncommon: #6fb05a;
+  --r-rare: #5591d8;
+  --r-epic: #a873d9;
+  --display: "IM Fell English SC", "Iowan Old Style", Georgia, serif;
+  --body: "Alegreya", "Iowan Old Style", Georgia, serif;
+  --ui: "Alegreya Sans", "Gill Sans", "Segoe UI", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); }
+body {
+  color: var(--fg);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.45;
+  background:
+    radial-gradient(120% 60% at 50% -10%, rgba(214,169,76,.10), transparent 60%),
+    var(--bg);
+  min-height: 100%;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--panel);
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.app { max-width: 560px; margin: 0 auto; padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }
+.gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* Header */
+header.sheet {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding-block: 14px 12px;
+}
+.sheet-row { display: flex; align-items: center; gap: 12px; }
+.crest {
+  width: 46px; height: 46px; flex: none; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 2px solid var(--gold); color: var(--gold);
+  font-family: var(--display); font-size: 22px; background: var(--panel-2);
+}
+.who { flex: 1; min-width: 0; }
+.who h1 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 21px; letter-spacing: .02em; line-height: 1.1; }
+.who .sub { font-family: var(--ui); font-size: 13px; color: var(--muted); }
+.purse { text-align: right; font-family: var(--ui); }
+.purse b { display: block; font-size: 18px; color: var(--gold); font-variant-numeric: tabular-nums; }
+.purse span { font-size: 11px; color: var(--muted); letter-spacing: .08em; text-transform: uppercase; }
+.xp { margin-top: 10px; display: flex; align-items: center; gap: 10px; font-family: var(--ui); font-size: 12px; color: var(--muted); }
+.xp-track { flex: 1; height: 8px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+.xp-fill { height: 100%; background: linear-gradient(90deg, var(--gold-dim), var(--gold)); transition: width .5s ease; }
+.xp .num { font-variant-numeric: tabular-nums; }
+
+/* Section heads */
+.panel { padding-block: 18px 8px; }
+.eyebrow { font-family: var(--ui); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--gold); margin: 0 0 2px; }
+h2 { font-family: var(--display); font-weight: 400; font-size: 26px; margin: 0 0 4px; text-wrap: balance; }
+.lede { color: var(--muted); margin: 0 0 16px; font-style: italic; }
+
+/* Quest log */
+.quests { display: flex; flex-direction: column; gap: 10px; }
+.quest {
+  display: grid; grid-template-columns: 52px 1fr; gap: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px;
+}
+.quest.today { border-color: var(--gold-dim); box-shadow: 0 0 0 1px var(--gold-dim) inset; }
+.quest.done { opacity: .62; }
+.day { text-align: center; font-family: var(--ui); border-right: 1px solid var(--line); padding-right: 10px; }
+.day b { display: block; font-family: var(--display); font-weight: 400; font-size: 22px; line-height: 1; }
+.day span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; }
+.q-body { min-width: 0; }
+.q-title { font-weight: 700; font-size: 17px; line-height: 1.25; margin: 0; }
+.quest.done .q-title { text-decoration: line-through; text-decoration-color: var(--gold-dim); }
+.q-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; font-family: var(--ui); font-size: 12px; }
+.chip { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.easy { color: var(--moss); border-color: color-mix(in srgb, var(--moss) 45%, transparent); }
+.chip.moderate { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, transparent); }
+.chip.hard { color: var(--ember); border-color: color-mix(in srgb, var(--ember) 45%, transparent); }
+.chip.status { color: var(--fg); background: var(--panel-2); }
+.q-approve { font-family: var(--ui); font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+.q-approve .yes { color: var(--moss); }
+.q-approve .no { color: var(--ember); }
+.q-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.btn {
+  font-family: var(--ui); font-weight: 700; font-size: 14px;
+  padding: 8px 14px; border-radius: 4px;
+  border: 1px solid var(--gold-dim); background: var(--panel-2); color: var(--gold);
+}
+.btn.primary { background: var(--gold); color: #1d150c; border-color: var(--gold); }
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: .45; cursor: default; }
+
+/* Supplies */
+.aisle { margin-bottom: 18px; }
+.aisle h3 { font-family: var(--ui); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; display: flex; justify-content: space-between; }
+.list { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; }
+.item {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 12px; background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left;
+}
+.item:last-child { border-bottom: 0; }
+.box { width: 22px; height: 22px; flex: none; border: 2px solid var(--gold-dim); border-radius: 3px; display: grid; place-items: center; color: #1d150c; font-size: 14px; font-weight: 700; font-family: var(--ui); }
+.item.got .box { background: var(--gold); border-color: var(--gold); }
+.item .nm { flex: 1; min-width: 0; }
+.item .nm b { font-weight: 500; display: block; }
+.item.got .nm b { color: var(--muted); text-decoration: line-through; }
+.item .nm small { font-family: var(--ui); color: var(--muted); font-size: 12px; }
+.item .cost { font-family: var(--ui); font-variant-numeric: tabular-nums; color: var(--gold); font-size: 14px; }
+.add { display: flex; gap: 8px; margin-bottom: 18px; }
+.add input {
+  flex: 1; min-width: 0; padding: 10px 12px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg); font: inherit;
+}
+.add input::placeholder { color: var(--muted); }
+.tally { font-family: var(--ui); font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 14px; }
+.tally b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* Pack */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.slot {
+  position: relative; aspect-ratio: 1; max-width: 100%;
+  border-radius: 6px; border: 2px solid var(--rc, var(--r-common));
+  background: radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--rc) 22%, var(--panel-2)), var(--panel) 75%);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 6px; text-align: center;
+}
+.slot.pick { outline: 3px solid var(--gold); outline-offset: 1px; }
+.slot .glyph { font-family: var(--display); font-size: 26px; line-height: 1; color: var(--rc); }
+.slot .lbl { font-family: var(--ui); font-size: 12px; line-height: 1.15; }
+.slot .qty { position: absolute; right: 6px; bottom: 4px; font-family: var(--ui); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.slot .spoil { position: absolute; left: 5px; top: 4px; font-family: var(--ui); font-size: 10px; font-weight: 700; color: var(--ember); letter-spacing: .04em; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-family: var(--ui); font-size: 12px; color: var(--muted); margin: 10px 0 20px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.alchemy {
+  border: 1px dashed var(--gold-dim); border-radius: 6px; padding: 14px; background: var(--panel);
+}
+.alchemy h3 { margin: 0 0 4px; font-family: var(--display); font-weight: 400; font-size: 20px; }
+.alchemy p { margin: 0 0 12px; color: var(--muted); font-size: 15px; }
+
+/* Party */
+.party { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+.member { display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+.member .crest { width: 42px; height: 42px; font-size: 19px; }
+.member .info { flex: 1; min-width: 0; }
+.member .info b { font-size: 17px; }
+.member .info small { display: block; font-family: var(--ui); color: var(--muted); font-size: 13px; }
+.meter { margin-top: 6px; height: 6px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+.meter i { display: block; height: 100%; background: var(--moss); }
+.mood { font-family: var(--ui); font-size: 12px; color: var(--moss); white-space: nowrap; }
+.perks { display: flex; flex-wrap: wrap; gap: 6px; }
+.perks .chip { color: var(--gold); border-color: var(--gold-dim); font-family: var(--ui); font-size: 13px; }
+
+/* Tab bar */
+nav.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6;
+  background: var(--panel); border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
+}
+nav.tabs .inner { max-width: 560px; margin: 0 auto; display: grid; grid-template-columns: repeat(4, 1fr); }
+nav.tabs button {
+  background: none; border: 0; padding: 10px 4px 12px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-family: var(--ui); font-size: 12px; color: var(--muted);
+}
+nav.tabs button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+nav.tabs button[aria-selected="true"] { color: var(--gold); }
+
+/* Toasts */
+.toasts { position: fixed; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 112px); z-index: 20; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; padding: 0 16px; }
+.toast {
+  font-family: var(--ui); font-size: 14px; font-weight: 500;
+  background: #0f0b08; border: 1px solid var(--gold-dim); color: var(--fg);
+  padding: 8px 14px; border-radius: 4px; box-shadow: 0 6px 20px rgba(0,0,0,.5);
+  animation: rise 2.6s ease forwards;
+}
+.toast .g { color: var(--gold); }
+.toast .y { color: var(--moss); }
+.toast .n { color: var(--ember); }
+@keyframes rise { 0% { opacity: 0; transform: translateY(8px); } 10%, 80% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-6px); } }
+
+/* Modal */
+.scrim { position: fixed; inset: 0; z-index: 30; background: rgba(8,6,4,.78); display: grid; place-items: center; padding: 16px; }
+.dialog { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--gold-dim); border-radius: 8px; padding: 22px 18px 18px; text-align: center; }
+.dialog h3 { font-family: var(--display); font-weight: 400; font-size: 26px; margin: 0 0 6px; color: var(--gold); }
+.dialog p { margin: 0 0 16px; color: var(--muted); }
+.die {
+  width: 108px; height: 108px; margin: 4px auto 14px;
+  display: grid; place-items: center;
+  clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%);
+  background: linear-gradient(160deg, var(--gold), var(--gold-dim));
+  color: #1d150c; font-family: var(--display); font-size: 44px;
+}
+.die.spin { animation: spin .9s cubic-bezier(.2,.7,.3,1); }
+@keyframes spin { from { transform: rotate(-540deg) scale(.6); } to { transform: none; } }
+.choices { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.choice { background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
+.choice b { display: block; color: var(--fg); }
+.choice small { font-family: var(--ui); color: var(--muted); }
+.choice:hover { border-color: var(--gold-dim); }
+.note { font-family: var(--ui); font-size: 12px; color: var(--muted); text-align: center; padding: 18px 0 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+</style>
+
+<div class="app">
+  <header class="sheet gutter">
+    <div class="sheet-row">
+      <div class="crest" aria-hidden="true">H</div>
+      <div class="who">
+        <h1>The Hungry Company</h1>
+        <div class="sub" id="lvl">Level 3 Hearthkeeper</div>
+      </div>
+      <div class="purse"><b id="gold">0g</b><span>left this week</span></div>
+    </div>
+    <div class="xp">
+      <span>XP</span>
+      <div class="xp-track"><div class="xp-fill" id="xpfill"></div></div>
+      <span class="num" id="xpnum"></span>
+    </div>
+  </header>
+
+  <main id="view" class="gutter"></main>
+</div>
+
+<nav class="tabs" aria-label="Sections">
+  <div class="inner" role="tablist">
+    <button role="tab" data-tab="quests" aria-selected="true">
+      <svg viewBox="0 0 24 24"><path d="M6 3h10a2 2 0 0 1 2 2v14a2 2 0 0 0 2 2H8a2 2 0 0 1-2-2V3z"/><path d="M6 3a2 2 0 0 0-2 2v2h2M9 8h6M9 12h6M9 16h4"/></svg>Quests
+    </button>
+    <button role="tab" data-tab="supplies" aria-selected="false">
+      <svg viewBox="0 0 24 24"><path d="M5 8h14l-1.5 12h-11z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>Supplies
+    </button>
+    <button role="tab" data-tab="pack" aria-selected="false">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>Pack
+    </button>
+    <button role="tab" data-tab="party" aria-selected="false">
+      <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 14.5c3 0 6 1.8 6 5"/></svg>Party
+    </button>
+  </div>
+</nav>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div id="modal"></div>
+
+<script>
+const XP_PER_LEVEL = 200;
+const KEY = "hearth-haversack-v1";
+
+const SEED = {
+  tab: "quests",
+  level: 3, xp: 150, budget: 120, spent: 41,
+  perks: ["Cuisine: Italian", "Perk: Knife Work"],
+  pickedPack: [],
+  quests: [
+    { day: "Mon", date: 26, name: "Garlic Butter Chicken & Greens", diff: "Easy", mins: 30, yes: ["Tobin", "Biscuit"], no: [], done: true },
+    { day: "Tue", date: 27, name: "Wild Mushroom Risotto", diff: "Moderate", mins: 45, yes: ["Mira"], no: ["Tobin"], done: true },
+    { day: "Wed", date: 28, name: "Harvest Pumpkin Soup", diff: "Easy", mins: 40, yes: ["Mira"], no: [], today: true },
+    { day: "Thu", date: 29, name: "Spiced Lamb Flatbreads", diff: "Moderate", mins: 35, yes: ["Tobin"], no: ["Mira"] },
+    { day: "Fri", date: 30, name: "Tavern Fish Pie", diff: "Hard", mins: 70, yes: ["Tobin", "Mira", "Biscuit"], no: [] },
+    { day: "Sat", date: 31, name: "Thai Green Curry", diff: "Hard", mins: 50, yes: [], no: [], unknown: true },
+    { day: "Sun", date: 1, name: "Roast Roots & Onion Gravy", diff: "Easy", mins: 60, yes: ["Mira"], no: [] }
+  ],
+  supplies: [
+    { aisle: "Produce", name: "Pumpkin", cost: 3, for: "Pumpkin Soup", rarity: "uncommon" },
+    { aisle: "Produce", name: "Fresh Basil", cost: 2, for: "Green Curry", rarity: "uncommon" },
+    { aisle: "Produce", name: "Lemons", cost: 2, for: "Fish Pie", rarity: "common" },
+    { aisle: "Produce", name: "Parsnips", cost: 2, for: "Roast Roots", rarity: "common" },
+    { aisle: "Butcher & Fishmonger", name: "Lamb Mince", cost: 7, for: "Lamb Flatbreads", rarity: "rare" },
+    { aisle: "Butcher & Fishmonger", name: "Smoked Haddock", cost: 8, for: "Fish Pie", rarity: "rare" },
+    { aisle: "Dairy", name: "Double Cream", cost: 2, for: "Pumpkin Soup, Fish Pie", rarity: "common" },
+    { aisle: "Dairy", name: "Feta", cost: 3, for: "Lamb Flatbreads", rarity: "uncommon" },
+    { aisle: "Larder", name: "Coconut Milk", cost: 2, for: "Green Curry", rarity: "common" },
+    { aisle: "Larder", name: "Green Curry Paste", cost: 3, for: "Green Curry", rarity: "rare" },
+    { aisle: "Larder", name: "Flatbreads", cost: 2, for: "Lamb Flatbreads", rarity: "common" }
+  ],
+  pack: [
+    { name: "Cooked Rice", qty: 2, rarity: "common", spoil: 1, leftover: true },
+    { name: "Roast Chicken", qty: 1, rarity: "uncommon", spoil: 2, leftover: true },
+    { name: "Spinach", qty: 1, rarity: "uncommon", spoil: 1, leftover: true },
+    { name: "Half Onion", qty: 1, rarity: "common", spoil: 3, leftover: true },
+    { name: "Onions", qty: 4, rarity: "common" },
+    { name: "Garlic", qty: 6, rarity: "common" },
+    { name: "Arborio Rice", qty: 1, rarity: "common" },
+    { name: "Butter", qty: 1, rarity: "common" },
+    { name: "Smoked Paprika", qty: 1, rarity: "rare" },
+    { name: "Saffron", qty: 1, rarity: "epic" },
+    { name: "Eggs", qty: 5, rarity: "common", spoil: 6 },
+    { name: "Parmesan", qty: 1, rarity: "uncommon" }
+  ],
+  party: [
+    { name: "You", role: "Hearthkeeper · cooks most nights", approval: 80 },
+    { name: "Mira", role: "Prefers vegetarian · loves soup", approval: 72 },
+    { name: "Tobin", role: "Sworn enemy of mushrooms", approval: 55 },
+    { name: "Biscuit", role: "Dog · eats whatever is dropped", approval: 100 }
+  ]
+};
+
+let S = load();
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return structuredClone(SEED);
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+const $ = (sel) => document.querySelector(sel);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const rarityVar = (r) => `var(--r-${r})`;
+
+function toast(html) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.innerHTML = html;
+  $("#toasts").appendChild(t);
+  setTimeout(() => t.remove(), 2700);
+}
+
+function gainXP(n, why) {
+  S.xp += n;
+  toast(`<span class="g">+${n} XP</span> · ${esc(why)}`);
+  if (S.xp >= XP_PER_LEVEL) {
+    S.xp -= XP_PER_LEVEL;
+    S.level += 1;
+    setTimeout(levelUp, 700);
+  }
+}
+
+function header() {
+  $("#lvl").textContent = `Level ${S.level} Hearthkeeper`;
+  $("#gold").textContent = `${S.budget - S.spent}g`;
+  $("#xpfill").style.width = `${(S.xp / XP_PER_LEVEL) * 100}%`;
+  $("#xpnum").textContent = `${S.xp} / ${XP_PER_LEVEL}`;
+}
+
+/* ---------- Quests ---------- */
+function viewQuests() {
+  const done = S.quests.filter((q) => q.done).length;
+  return `
+  <section class="panel">
+    <p class="eyebrow">Act IV · Week of 26 October</p>
+    <h2>Quest Log</h2>
+    <p class="lede">${done} of ${S.quests.length} dinners conquered. Cook a meal to take a long rest.</p>
+    <div class="quests">
+      ${S.quests.map((q, i) => {
+        const status = q.done ? "Complete" : q.today ? "Tonight" : q.unknown ? "Uncharted" : "Planned";
+        const yes = q.yes.length ? `<span class="yes">${q.yes.map(esc).join(", ")} will approve</span>` : "";
+        const no = q.no.length ? `<span class="no">${q.no.map(esc).join(", ")} will disapprove</span>` : "";
+        const approve = q.unknown
+          ? `<p class="q-approve">A new recipe. Roll to see how it goes.</p>`
+          : `<p class="q-approve">${[yes, no].filter(Boolean).join(" · ") || "No strong opinions in camp."}</p>`;
+        let actions = "";
+        if (!q.done && q.unknown) actions = `<button class="btn primary" data-roll="${i}">Roll d20 to attempt</button>`;
+        else if (!q.done) actions = `<button class="btn ${q.today ? "primary" : ""}" data-rest="${i}">Cooked it · Long rest</button>`;
+        return `
+        <article class="quest ${q.today ? "today" : ""} ${q.done ? "done" : ""}">
+          <div class="day"><span>${q.day}</span><b>${q.date}</b></div>
+          <div class="q-body">
+            <p class="q-title">${esc(q.name)}</p>
+            <div class="q-meta">
+              <span class="chip status">${status}</span>
+              <span class="chip ${q.diff.toLowerCase()}">${q.diff}</span>
+              <span class="chip">${q.mins} min</span>
+            </div>
+            ${approve}
+            ${actions ? `<div class="q-actions">${actions}</div>` : ""}
+          </div>
+        </article>`;
+      }).join("")}
+    </div>
+    <p class="note">Prototype with example data. Progress saves in this browser only.</p>
+  </section>`;
+}
+
+function completeQuest(i, bonus = 0) {
+  const q = S.quests[i];
+  q.done = true;
+  q.today = false;
+  const next = S.quests.find((x) => !x.done);
+  if (next && !next.unknown) next.today = true;
+  q.yes.forEach((n, k) => setTimeout(() => toast(`<span class="y">${esc(n)} approves.</span>`), 350 * (k + 1)));
+  q.no.forEach((n, k) => setTimeout(() => toast(`<span class="n">${esc(n)} disapproves.</span>`), 350 * (q.yes.length + k + 1)));
+  S.party.forEach((m) => {
+    if (q.yes.includes(m.name)) m.approval = Math.min(100, m.approval + 6);
+    if (q.no.includes(m.name)) m.approval = Math.max(0, m.approval - 4);
+  });
+  gainXP(40 + bonus, "Quest complete");
+}
+
+function rollFor(i) {
+  const q = S.quests[i];
+  $("#modal").innerHTML = `
+    <div class="scrim" role="dialog" aria-modal="true" aria-labelledby="rollh">
+      <div class="dialog">
+        <h3 id="rollh">Skill Check: Cooking</h3>
+        <p>${esc(q.name)} · DC 12</p>
+        <div class="die spin" id="die">?</div>
+        <p id="rollout">The die tumbles…</p>
+        <div class="q-actions" style="justify-content:center" id="rollbtns"></div>
+      </div>
+    </div>`;
+  const die = $("#die");
+  let ticks = 0;
+  const timer = setInterval(() => {
+    die.textContent = 1 + Math.floor(Math.random() * 20);
+    if (++ticks > 9) {
+      clearInterval(timer);
+      const r = 1 + Math.floor(Math.random() * 20);
+      die.textContent = r;
+      let msg, bonus;
+      if (r === 20) { msg = "Critical success! The party demands this every week."; bonus = 60; }
+      else if (r >= 12) { msg = "Success. A fine new dish for the recipe book."; bonus = 25; }
+      else if (r > 1) { msg = "A messy attempt, but everyone ate. That still counts."; bonus = 10; }
+      else { msg = "Critical fail. You ordered takeaway. +5 XP for bravery."; bonus = -35; }
+      $("#rollout").textContent = msg;
+      $("#rollbtns").innerHTML = `<button class="btn primary" id="rollok">Take a long rest</button>`;
+      $("#rollok").onclick = () => {
+        $("#modal").innerHTML = "";
+        if (r >= 12) q.yes = ["Mira", "Tobin"];
+        completeQuest(i, bonus);
+        S.quests[i].unknown = false;
+        if (r >= 12) S.perks.push("Recipe: " + q.name);
+        render();
+      };
+    }
+  }, 70);
+}
+
+/* ---------- Supplies ---------- */
+function viewSupplies() {
+  const got = S.supplies.filter((s) => s.got);
+  const total = S.supplies.reduce((a, s) => a + s.cost, 0);
+  const aisles = [...new Set(S.supplies.map((s) => s.aisle))];
+  return `
+  <section class="panel">
+    <p class="eyebrow">Before Friday's long rest</p>
+    <h2>Supply Run</h2>
+    <p class="lede">Gathered from this week's quests. Tap an item as it goes in the basket.</p>
+    <div class="tally"><span>Gathered <b>${got.length}/${S.supplies.length}</b></span><span>Estimated <b>${total}g</b></span></div>
+    <form class="add" id="addform">
+      <input id="additem" placeholder="Add a supply (e.g. Bread)" autocomplete="off" aria-label="Add a supply">
+      <button class="btn" type="submit">Add</button>
+    </form>
+    ${aisles.map((a) => {
+      const items = S.supplies.map((s, i) => [s, i]).filter(([s]) => s.aisle === a);
+      const left = items.filter(([s]) => !s.got).length;
+      return `
+      <div class="aisle">
+        <h3><span>${esc(a)}</span><span>${left ? left + " left" : "Cleared"}</span></h3>
+        <div class="list">
+          ${items.map(([s, i]) => `
+            <button class="item ${s.got ? "got" : ""}" data-sup="${i}" aria-pressed="${!!s.got}">
+              <span class="box">${s.got ? "✓" : ""}</span>
+              <span class="nm"><b>${esc(s.name)}</b><small>For ${esc(s.for)}</small></span>
+              <span class="cost">${s.cost}g</span>
+            </button>`).join("")}
+        </div>
+      </div>`;
+    }).join("")}
+  </section>`;
+}
+
+function toggleSupply(i) {
+  const s = S.supplies[i];
+  s.got = !s.got;
+  if (s.got) {
+    S.spent += s.cost;
+    const have = S.pack.find((p) => p.name === s.name);
+    if (have) have.qty += 1;
+    else S.pack.push({ name: s.name, qty: 1, rarity: s.rarity || "common" });
+    toast(`<span class="g">+1 ${esc(s.name)}</span> added to pack`);
+    if (S.supplies.every((x) => x.got)) setTimeout(() => gainXP(50, "Supply run cleared"), 500);
+  } else {
+    S.spent -= s.cost;
+    const have = S.pack.find((p) => p.name === s.name);
+    if (have) { have.qty -= 1; if (have.qty <= 0) { S.pack.splice(S.pack.indexOf(have), 1); S.pickedPack = []; } }
+  }
+}
+
+/* ---------- Pack ---------- */
+function viewPack() {
+  const picked = S.pickedPack;
+  const leftovers = S.pack.filter((p) => p.leftover).length;
+  return `
+  <section class="panel">
+    <p class="eyebrow">Fridge, freezer &amp; larder</p>
+    <h2>Pack</h2>
+    <p class="lede">${S.pack.length} items carried. Red numbers show days until something spoils.</p>
+    <div class="grid">
+      ${S.pack.map((p, i) => `
+        <button class="slot ${picked.includes(i) ? "pick" : ""}" style="--rc:${rarityVar(p.rarity)}" data-pack="${i}" aria-pressed="${picked.includes(i)}" title="${esc(p.name)}">
+          ${p.spoil && p.spoil <= 2 ? `<span class="spoil">${p.spoil}d</span>` : ""}
+          <span class="glyph">${esc(p.name[0])}</span>
+          <span class="lbl">${esc(p.name)}</span>
+          <span class="qty">×${p.qty}</span>
+        </button>`).join("")}
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--r-common)"></i>Staple</span>
+      <span><i style="background:var(--r-uncommon)"></i>Fresh</span>
+      <span><i style="background:var(--r-rare)"></i>Pricey</span>
+      <span><i style="background:var(--r-epic)"></i>Treasure</span>
+    </div>
+    <div class="alchemy">
+      <h3>Leftover Alchemy</h3>
+      <p>${leftovers ? "Pick two or more leftovers from the pack and combine them into a new meal before they spoil." : "No leftovers right now. Cook a big batch and some will turn up here."}</p>
+      <button class="btn primary" id="brew" ${picked.length >= 2 ? "" : "disabled"}>Combine ${picked.length || ""} ${picked.length === 1 ? "item" : "items"}</button>
+    </div>
+  </section>`;
+}
+
+const RECIPES = [
+  { needs: ["Cooked Rice", "Roast Chicken"], name: "Chicken Fried Rice" },
+  { needs: ["Cooked Rice", "Spinach"], name: "Green Fried Rice" },
+  { needs: ["Roast Chicken", "Spinach"], name: "Chicken & Spinach Wraps" },
+  { needs: ["Eggs", "Spinach"], name: "Spinach Frittata" },
+  { needs: ["Cooked Rice", "Eggs"], name: "Egg Fried Rice" },
+  { needs: ["Half Onion", "Eggs"], name: "Onion Omelette" }
+];
+
+function brew() {
+  const items = S.pickedPack.map((i) => S.pack[i]);
+  const names = items.map((p) => p.name);
+  const match = RECIPES.find((r) => r.needs.every((n) => names.includes(n)));
+  const dish = match ? match.name : "Scrap Stew of Modest Renown";
+  items.forEach((p) => { p.qty -= 1; });
+  S.pack = S.pack.filter((p) => p.qty > 0);
+  S.pickedPack = [];
+  toast(`Brewed <span class="g">${esc(dish)}</span>`);
+  gainXP(match ? 30 : 15, "Nothing wasted");
+}
+
+/* ---------- Party ---------- */
+function viewParty() {
+  return `
+  <section class="panel">
+    <p class="eyebrow">Your household</p>
+    <h2>The Party</h2>
+    <p class="lede">Approval rises when you cook what someone likes.</p>
+    <div class="party">
+      ${S.party.map((m) => `
+        <div class="member">
+          <div class="crest" aria-hidden="true">${esc(m.name[0])}</div>
+          <div class="info">
+            <b>${esc(m.name)}</b><small>${esc(m.role)}</small>
+            <div class="meter" role="meter" aria-label="${esc(m.name)} approval" aria-valuenow="${m.approval}" aria-valuemin="0" aria-valuemax="100"><i style="width:${m.approval}%"></i></div>
+          </div>
+          <span class="mood">${m.approval >= 90 ? "Devoted" : m.approval >= 70 ? "Pleased" : m.approval >= 50 ? "Content" : "Grumbling"}</span>
+        </div>`).join("")}
+    </div>
+    <p class="eyebrow">Perks &amp; unlocks</p>
+    <div class="perks">${S.perks.map((p) => `<span class="chip">${esc(p)}</span>`).join("")}</div>
+    <div class="q-actions" style="margin-top:22px">
+      <button class="btn" id="reset">Reset prototype</button>
+    </div>
+  </section>`;
+}
+
+function levelUp() {
+  const options = [
+    ["Cuisine: Japanese", "Unlocks 12 starter recipes"],
+    ["Perk: Batch Cook", "Double portions count as two quests"],
+    ["Perk: Bargain Hunter", "Flags cheaper swaps on the supply run"]
+  ];
+  $("#modal").innerHTML = `
+    <div class="scrim" role="dialog" aria-modal="true" aria-labelledby="lvh">
+      <div class="dialog">
+        <h3 id="lvh">Level ${S.level}</h3>
+        <p>The company grows stronger. Choose a perk.</p>
+        <div class="choices">
+          ${options.map(([t, d]) => `<button class="choice" data-perk="${esc(t)}"><b>${esc(t)}</b><small>${esc(d)}</small></button>`).join("")}
+        </div>
+      </div>
+    </div>`;
+  document.querySelectorAll("[data-perk]").forEach((b) => b.onclick = () => {
+    S.perks.push(b.dataset.perk);
+    $("#modal").innerHTML = "";
+    toast(`Learned <span class="g">${esc(b.dataset.perk)}</span>`);
+    render();
+  });
+  render();
+}
+
+/* ---------- Render ---------- */
+const VIEWS = { quests: viewQuests, supplies: viewSupplies, pack: viewPack, party: viewParty };
+
+function render() {
+  header();
+  $("#view").innerHTML = VIEWS[S.tab]();
+  document.querySelectorAll("nav.tabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === S.tab));
+  save();
+}
+
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("button");
+  if (!t) return;
+  if (t.dataset.tab) { S.tab = t.dataset.tab; render(); window.scrollTo(0, 0); return; }
+  if (t.dataset.rest) { completeQuest(+t.dataset.rest); render(); return; }
+  if (t.dataset.roll) { rollFor(+t.dataset.roll); return; }
+  if (t.dataset.sup) { toggleSupply(+t.dataset.sup); render(); return; }
+  if (t.dataset.pack) {
+    const i = +t.dataset.pack;
+    const p = S.pack[i];
+    if (!p.leftover) { toast(`${esc(p.name)} is a staple. Pick leftovers to combine.`); return; }
+    S.pickedPack = S.pickedPack.includes(i) ? S.pickedPack.filter((x) => x !== i) : [...S.pickedPack, i];
+    render(); return;
+  }
+  if (t.id === "brew") { brew(); render(); return; }
+  if (t.id === "reset") { S = structuredClone(SEED); render(); toast("Prototype reset"); return; }
+});
+
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "addform") return;
+  e.preventDefault();
+  const v = $("#additem").value.trim();
+  if (!v) return;
+  S.supplies.push({ aisle: "Added by you", name: v, cost: 2, for: "your own plans", rarity: "common" });
+  toast(`<span class="g">${esc(v)}</span> added to the supply run`);
+  render();
+  $("#additem").focus();
+});
+
+const h = (location.hash || "").slice(1);
+if (VIEWS[h]) S.tab = h;
+render();
+</script>

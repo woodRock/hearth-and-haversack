@@ -1,0 +1,13 @@
+{
+  "name": "Hearth & Haversack",
+  "short_name": "Haversack",
+  "description": "Plan dinners and track groceries as a fantasy campaign.",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#16110d",
+  "theme_color": "#16110d",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

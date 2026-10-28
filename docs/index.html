@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#16110d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Hearth &amp; Haversack</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IM+Fell+English+SC&family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=Alegreya+Sans:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="embers" aria-hidden="true"></canvas>
+
+  <!-- Main menu -->
+  <section id="menu" class="screen title-screen" hidden>
+    <div class="title-block">
+      <p class="kicker">A campaign of suppers</p>
+      <h1 class="game-title">Hearth <span>&amp;</span> Haversack</h1>
+    </div>
+    <nav class="menu-list" aria-label="Main menu">
+      <button id="menu-continue" class="menu-item">Continue<small id="continue-detail"></small></button>
+      <button id="menu-new" class="menu-item">New Campaign</button>
+      <button id="menu-settings" class="menu-item">Settings</button>
+    </nav>
+    <p class="menu-foot" id="menu-status">Checking the camp…</p>
+  </section>
+
+  <!-- Character creation -->
+  <section id="create" class="screen create-screen" hidden>
+    <form id="create-form" class="create-inner gutter">
+      <p class="eyebrow">New campaign</p>
+      <h2 class="create-title">Who keeps this hearth?</h2>
+
+      <label class="field">
+        <span>Your name</span>
+        <input id="hero-name" required maxlength="24" placeholder="e.g. Jesse" autocomplete="given-name">
+      </label>
+
+      <fieldset class="field">
+        <legend>Choose a class</legend>
+        <div class="classes" id="class-list"></div>
+      </fieldset>
+
+      <fieldset class="field">
+        <legend>Your party <small>(who you cook for, optional)</small></legend>
+        <div class="companions" id="companion-rows"></div>
+      </fieldset>
+
+      <label class="field">
+        <span>Weekly food budget</span>
+        <div class="money"><input id="budget" type="number" min="10" max="2000" step="5" value="120" inputmode="numeric"><b>gold</b></div>
+        <small class="hint">1 gold = 1 of your currency.</small>
+      </label>
+
+      <div class="create-actions">
+        <button type="button" class="btn" id="create-back">Back</button>
+        <button type="submit" class="btn primary">Begin the campaign</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- Loading screen -->
+  <section id="loading" class="screen loading-screen" hidden aria-live="polite">
+    <div class="loading-art" aria-hidden="true"><div class="rune"></div></div>
+    <h2 id="loading-title">Loading</h2>
+    <p id="loading-sub" class="loading-sub"></p>
+    <div class="loading-bar"><i id="loading-fill"></i></div>
+    <p class="loading-tip"><b>Tip</b> <span id="loading-tip"></span></p>
+    <button class="btn" id="loading-cancel" hidden>Cancel</button>
+  </section>
+
+  <!-- Act complete -->
+  <section id="actend" class="screen actend-screen" hidden>
+    <div class="actend-inner gutter" id="actend-body"></div>
+  </section>
+
+  <!-- Game -->
+  <section id="game" class="screen" hidden>
+    <header class="sheet gutter">
+      <div class="sheet-row">
+        <button class="crest" id="open-menu" aria-label="Open the main menu">≡</button>
+        <div class="who">
+          <h1 id="hero-line">Hearthkeeper</h1>
+          <div class="sub" id="lvl-line"></div>
+        </div>
+        <div class="purse"><b id="gold"></b><span>gold left</span></div>
+      </div>
+      <div class="xp">
+        <span>XP</span>
+        <div class="xp-track"><div class="xp-fill" id="xpfill"></div></div>
+        <span class="num" id="xpnum"></span>
+      </div>
+    </header>
+    <main id="view" class="gutter"></main>
+    <nav class="tabs" aria-label="Sections">
+      <div class="inner" role="tablist">
+        <button role="tab" data-tab="camp"><svg viewBox="0 0 24 24"><path d="M4 21 12 4l8 17M8.5 21 12 14l3.5 7M2 21h20"/></svg>Camp</button>
+        <button role="tab" data-tab="quests"><svg viewBox="0 0 24 24"><path d="M6 3h10a2 2 0 0 1 2 2v14a2 2 0 0 0 2 2H8a2 2 0 0 1-2-2V3z"/><path d="M6 3a2 2 0 0 0-2 2v2h2M9 8h6M9 12h6M9 16h4"/></svg>Quests</button>
+        <button role="tab" data-tab="supplies"><svg viewBox="0 0 24 24"><path d="M5 8h14l-1.5 12h-11z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>Supplies</button>
+        <button role="tab" data-tab="pack"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg>Pack</button>
+        <button role="tab" data-tab="party"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M15 14.5c3 0 6 1.8 6 5"/></svg>Party</button>
+      </div>
+    </nav>
+  </section>
+
+  <input type="file" id="receipt-input" accept="image/*" capture="environment" hidden>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <div id="modal"></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
