@@ -386,7 +386,8 @@ h2.view-title { font-family: var(--display); font-weight: 400; font-size: 27px; 
 
 /* Party */
 .party { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
-.member { display: flex; gap: 12px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+.member { display: flex; gap: 12px; align-items: center; width: 100%; text-align: left; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; }
+.member:hover { border-color: var(--gold-dim); }
 .member .crest { width: 42px; height: 42px; font-size: 19px; }
 .member .info { flex: 1; min-width: 0; }
 .member .info b { font-size: 17px; }

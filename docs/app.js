@@ -1,6 +1,6 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=13";
-import * as cloud from "./cloud.js?v=13";
-import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=13";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=14";
+import * as cloud from "./cloud.js?v=14";
+import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=14";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -1890,21 +1890,46 @@ function eatPicked() {
 }
 
 /* Party */
+// Likes and dislikes feed Claude's planning and recipes. Names stay fixed, since past ratings use them.
+function editTastes(i) {
+  const m = S.party[i];
+  if (!m) return;
+  modal(`<div class="dialog left"><h3>${i === 0 ? "Your tastes" : `${esc(m.name)}'s tastes`}</h3>
+    <p>Claude uses these when it plans the week and writes recipes.</p>
+    <form id="tastes">
+      <label class="field"><span>Likes</span><input id="t-likes" maxlength="120" value="${esc(m.likes || "")}" placeholder="e.g. spicy food, noodles, seafood"></label>
+      <label class="field"><span>Dislikes</span><input id="t-dislikes" maxlength="120" value="${esc(m.dislikes || "")}" placeholder="e.g. mushrooms, coriander"></label>
+      <div class="row" style="margin-top:6px"><button type="button" class="btn" id="t-x">Cancel</button><button class="btn primary">Save</button></div>
+    </form></div>`,
+    (root) => {
+      root.querySelector("#t-x").onclick = closeModal;
+      root.querySelector("#tastes").onsubmit = (e) => {
+        e.preventDefault();
+        m.likes = root.querySelector("#t-likes").value.trim();
+        m.dislikes = root.querySelector("#t-dislikes").value.trim();
+        closeModal();
+        logLine(`Noted ${i === 0 ? "your" : `${m.name}'s`} tastes.`);
+        toast(`Saved ${i === 0 ? "your" : `${esc(m.name)}'s`} tastes`);
+        render();
+      };
+    });
+}
+
 function viewParty() {
   return `<section class="panel">
     <p class="eyebrow">Your household</p>
     <h2 class="view-title">The Party</h2>
-    <p class="lede">Approval rises when you cook what someone likes.</p>
+    <p class="lede">Approval rises when you cook what someone likes. Tap someone to change their tastes.</p>
     <div class="party">${S.party.map((m, i) => `
-      <div class="member">
+      <button class="member" data-member="${i}" aria-label="Edit ${esc(m.name)}'s tastes">
         <div class="crest" aria-hidden="true">${esc(m.name[0])}</div>
         <div class="info">
           <b>${esc(m.name)}</b>
-          <small>${i === 0 ? esc(m.role) : [m.likes && `Likes ${esc(m.likes)}`, m.dislikes && `dislikes ${esc(m.dislikes)}`].filter(Boolean).join(" · ") || "No stated tastes"}</small>
+          <small>${[i === 0 && esc(m.role), m.likes && `Likes ${esc(m.likes)}`, m.dislikes && `dislikes ${esc(m.dislikes)}`].filter(Boolean).join(" · ") || "No stated tastes"}</small>
           <div class="meter" role="meter" aria-label="${esc(m.name)} approval" aria-valuenow="${m.approval}" aria-valuemin="0" aria-valuemax="100"><i style="width:${m.approval}%"></i></div>
         </div>
         <span class="mood">${m.approval >= 90 ? "Devoted" : m.approval >= 70 ? "Pleased" : m.approval >= 50 ? "Content" : "Grumbling"}</span>
-      </div>`).join("")}</div>
+      </button>`).join("")}</div>
     <p class="eyebrow">Perks &amp; recipes</p>
     <div class="perks">${S.perks.length ? S.perks.map((p) => `<span class="chip">${esc(p)}</span>`).join("") : `<span class="hint">Level up to unlock cuisines and skills.</span>`}</div>
     <div class="section-gap"></div>
@@ -2031,6 +2056,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "brew") return brew();
   if (d.act === "eat") return eatPicked();
   if (d.act === "handpack") return addSuppliesByHand();
+  if (d.member) return editTastes(+d.member);
   if (d.act === "unpick") { picked = []; return render(); }
   if (d.act === "book") return openBook();
   if (d.act === "replan") return startReplan();

@@ -21,6 +21,7 @@ A meal planner and grocery tracker played as a fantasy campaign. Each week is an
 - **New recipes.** Roll a d20 against DC 12. A natural 20 adds the dish to your recipe book.
 - **Supplies.** The week's shopping list, grouped by aisle. Tick items off as they go in the trolley: ticking is only a checklist and doesn't change your Pack or spending. Scanning the receipt is what puts items in your Pack and records what they cost, and list items it covers show as **In your Pack**. With no receipt, **Add items to the Pack by hand** puts chosen list items in the Pack without recording spending. Ticks sync, so a household can shop from the same list.
 - **Pack.** Your fridge and pantry as an inventory grid. Add things by hand with the box at the top ("Tasty Cheese x2" works). Tap items to select them, then **Mark as eaten** for anything eaten on its own (a bag of chips, a lunch, a leftover), choosing how many of each. Select two or more to combine them into a meal.
+- **Party.** Everyone you cook for, with their approval. Tap anyone, including yourself, to change their likes and dislikes. Claude uses them for planning and recipes.
 - **Act complete.** At the end of the week you see how it went, earn bonus XP for staying under budget and wasting nothing, then hold the next war council.
 
 ## Claude features
