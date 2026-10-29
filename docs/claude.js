@@ -192,7 +192,7 @@ export function planDays({ days, party, pack, perks, recent, notes, budget, hist
     .join("\n");
   const packText = pack.map((p) => `- ${p.name} x${p.qty}${p.spoil ? ` (spoils in ${p.spoil} days)` : ""}`).join("\n");
   const dayText = days
-    .map((d, i) => `${i + 1}. ${d.label}: ${d.request ? `they've chosen "${d.request}"` : "your choice"}${d.busy ? " (busy night, 30 minutes or less)" : ""}`)
+    .map((d, i) => `${i + 1}. ${d.label}: ${d.request ? `they've chosen "${d.request}"` : "your choice"}${d.busy ? " (busy night, 30 minutes or less)" : ""}${d.saved?.length ? `. Their saved recipe uses: ${d.saved.join(", ")}` : ""}`)
     .join("\n");
   const single = days.length === 1;
   return ask({
@@ -222,15 +222,20 @@ Rules:
 - Where they've chosen a dish, keep their dish and its name as they wrote it (tidy the capitalisation) and fill in its details and ingredients.
 - Busy nights take 30 minutes or less.
 - Lean towards what went down well and away from what people disliked. You may bring back a recipe-book dish now and then, but most nights should be new.
-- Use up items that spoil soon on the earliest nights. List those under uses_from_pack using their exact names from the pantry list.
+- Use what they already have first. Before putting anything on the shopping list, check the pantry list. If they have it, or something that does the same job in this dish (Tasty Cheese for Parmesan in a Caesar salad, Spinach for Kale, Chicken Thighs for Chicken Breast), use that instead. Only buy what the dish needs that nothing in the pantry can stand in for.
+- Where a chosen dish comes with their saved recipe, plan for exactly those ingredients without substituting: use the pantry where it has them and buy the rest.
+- uses_from_pack lists every pantry item the dish uses, with their exact names from the pantry list. Use items that spoil soon on the earliest nights. Only share a pantry item across several nights when the amount on hand covers them all.
+- Oil, salt and pepper are always on hand: never buy them.
 ${single ? "- Set new_recipe to false unless this is clearly an adventurous dish." : "- Mix easy weeknight meals with one or two bigger cooks. Set new_recipe to true for exactly one adventurous dish you picked (never one they chose)."}
 - approves and disapproves hold names from the household list, based on their likes and dislikes. Leave them empty when nobody has a strong view.
-- ingredients lists only what still needs buying, with a rough cost at a typical supermarket. Use simple names a shopper would recognise.`,
+- ingredients lists only what still needs buying, with a rough cost at a typical supermarket. Use simple names a shopper would recognise. Together, uses_from_pack and ingredients are everything the dish needs apart from oil, salt and pepper.`,
   });
 }
 
-// Writes the full recipe for one planned dinner, using what's already in the Pack where it fits.
-export function writeRecipe({ dish, eaters, minutes, busy, pack, buy, dislikes, signal }) {
+// Writes the full recipe for one planned dinner, built from the ingredients the plan set aside and bought for it,
+// so the recipe and the shopping list agree.
+export function writeRecipe({ dish, eaters, minutes, busy, uses = [], buy = [], pack = [], dislikes, signal }) {
+  const planned = uses.length || buy.length;
   return ask({
     effort: "medium",
     schema: RECIPE_SCHEMA,
@@ -238,13 +243,19 @@ export function writeRecipe({ dish, eaters, minutes, busy, pack, buy, dislikes, 
     content: `Write a home-cooking recipe for "${dish}" for ${eaters.length} ${eaters.length === 1 ? "person" : "people"} (${eaters.join(", ")}).
 
 Aim for about ${minutes} minutes in total${busy ? ", and no more than 30 minutes because it's a busy night" : ""}.
-Already in their kitchen: ${pack.join(", ") || "nothing noted"}.
-Bought for this dinner: ${buy.join(", ") || "nothing specific"}.
+${planned ? `The plan for this dinner:
+- From their Pack: ${uses.join(", ") || "nothing"}
+- Bought for it: ${buy.join(", ") || "nothing"}
+Also in their kitchen: ${pack.join(", ") || "nothing else noted"}.
+
+Build the recipe from the plan. Use every planned ingredient, under the same name, and never swap one for something else: if Parmesan was bought, the recipe uses Parmesan, not another cheese from the kitchen. Beyond the plan, use only oil, salt, pepper and water, plus anything from the kitchen list the dish clearly needs. Don't add ingredients they'd have to buy.` : `In their kitchen: ${pack.join(", ") || "nothing noted"}.
+
+Use what's in their kitchen first, and keep anything they'd have to buy to a minimum.`}
 ${dislikes ? `Avoid where you can: ${dislikes}.` : ""}
 
 - servings: how many it serves.
 - minutes: total time from start to plate.
-- ingredients: every ingredient, including oil, salt and other basics. name is a plain name, written exactly as it appears in the lists above when it's the same thing. amount uses metric with everyday measures, like "400 g", "2 tbsp" or "1 large".
+- ingredients: every ingredient, including oil, salt and other basics. name is a plain name, written exactly as it appears in the lists above. amount uses metric with everyday measures, like "400 g", "2 tbsp" or "1 large".
 - steps: 4 to 10 steps in order, one clear action each, with heat levels and times where they matter.
 - tip: one short, useful tip for this dish, or "" if there's nothing worth adding.`,
   });

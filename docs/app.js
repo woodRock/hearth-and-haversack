@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=9";
-import * as cloud from "./cloud.js?v=9";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=10";
+import * as cloud from "./cloud.js?v=10";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -1174,7 +1174,9 @@ function pickFromBook(onPick) {
       root.querySelectorAll("[data-pick]").forEach((b) => b.onclick = () => { closeModal(); onPick(book.find((x) => x.id === b.dataset.pick)); });
     });
 }
-const dayInfo = (d, i) => ({ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: d.request, busy: d.busy });
+const dayInfo = (d, i) => ({ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: d.request, busy: d.busy, saved: savedIngredients(d.request) });
+// A recipe-book dish keeps its saved recipe, so the shopping is planned from that recipe's ingredients.
+const savedIngredients = (name) => (name && bookEntry(name)?.recipe?.ingredients.map((g) => g.name)) || [];
 
 function fromPlan(q) {
   const names = new Set(S.party.map((m) => m.name));
@@ -1248,7 +1250,7 @@ async function rerollDay(i, request = "") {
       title: request ? "Writing it up" : "Another idea", sub: request ? `Claude is writing up ${request}…` : "Claude is leafing through the recipe books…", min: 900, cancellable: true,
       task: (signal) => planDays({
         ...planContext(), recent: [...others, d.quest?.name, ...S.recent].filter(Boolean),
-        days: [{ ...dayInfo(d, i), request }], signal,
+        days: [{ ...dayInfo(d, i), request, saved: savedIngredients(request) }], signal,
       }),
     });
     if (plan.quests[0]) d.quest = fromPlan(plan.quests[0]);
@@ -1410,7 +1412,7 @@ async function changeDish(i, name) {
     try {
       const plan = await loading({
         title: name, sub: "Claude is working out the shopping…", min: 900, cancellable: true,
-        task: (signal) => planDays({ ...planContext(), notes: "", recent: [...others, ...S.recent], days: [{ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: name, busy: (old.mins || 40) <= 30 }], signal }),
+        task: (signal) => planDays({ ...planContext(), notes: "", recent: [...others, ...S.recent], days: [{ label: dateFor(i).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), request: name, busy: (old.mins || 40) <= 30, saved: savedIngredients(name) }], signal }),
       });
       if (plan.quests[0]) next = fromPlan(plan.quests[0]);
     } catch (err) {
@@ -1437,21 +1439,23 @@ async function openRecipe(id, { rewrite = false } = {}) {
   if (!q) return;
   const saved = bookEntry(q.name);
   if (!q.recipe && !rewrite && saved?.recipe) q.recipe = saved.recipe;
-  if ((!q.recipe || rewrite) && hasKey()) {
+  // Recipes written before they followed the plan can disagree with the shopping list; write those again.
+  const stale = q.recipe && !q.recipe.v && !saved?.recipe && q.status === "planned";
+  if ((!q.recipe || rewrite || stale) && hasKey()) {
     try {
       const recipe = await loading({
         title: q.name, sub: "Claude is copying out the recipe…", min: 900, cancellable: true,
         task: (signal) => writeRecipe({
           dish: q.name, minutes: q.mins || 40, busy: (q.mins || 40) <= 30,
           eaters: S.party.map((m) => m.name),
-          pack: S.pack.filter((p) => !p.leftover).map((p) => p.name),
-          buy: q.buy || [],
+          uses: q.uses || [], buy: q.buy || [],
+          pack: S.pack.filter((p) => !p.leftover && !(q.uses || []).includes(p.name)).map((p) => p.name),
           dislikes: S.party.map((m) => m.dislikes).filter(Boolean).join("; "),
           signal,
         }),
       });
-      q.recipe = recipe;
-      if (saved && (rewrite || !saved.recipe)) saved.recipe = recipe;
+      q.recipe = { ...recipe, v: 2 };
+      if (saved && (rewrite || !saved.recipe)) saved.recipe = q.recipe;
       recipeTicks = new Set();
       save();
     } catch (err) {
