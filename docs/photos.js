@@ -1,6 +1,6 @@
 // Photos of cooked dinners. Each is kept on this device in IndexedDB and, when signed in,
 // in the household's campaign so everyone sees it. The game state stores only photo ids.
-import * as cloud from "./cloud.js?v=12";
+import * as cloud from "./cloud.js?v=13";
 
 const open = () => new Promise((resolve, reject) => {
   const req = indexedDB.open("hh-photos", 1);

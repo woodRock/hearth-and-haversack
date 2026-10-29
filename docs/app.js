@@ -1,6 +1,6 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=12";
-import * as cloud from "./cloud.js?v=12";
-import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=12";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=13";
+import * as cloud from "./cloud.js?v=13";
+import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=13";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -48,7 +48,13 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const uid = () => Math.random().toString(36).slice(2, 10);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) => String(s).toLowerCase().replace(/[^a-z ]/g, "").replace(/(es|s)\b/g, "").trim();
-const sameItem = (a, b) => { const x = norm(a), y = norm(b); return x && y && (x === y || x.includes(y) || y.includes(x)); };
+// Loose match on whole words: "Cheese" matches "Tasty Cheese", but "Oil" doesn't match "Toilet Paper" and "Egg" doesn't match "Eggplant".
+const sameItem = (a, b) => {
+  const x = norm(a).split(/\s+/).filter(Boolean), y = norm(b).split(/\s+/).filter(Boolean);
+  if (!x.length || !y.length) return false;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.every((w) => long.includes(w));
+};
 const titleCase = (s) => s.replace(/\b\w/g, (m) => m.toUpperCase());
 const clampQty = (n) => Math.min(99, Math.max(1, parseInt(n, 10) || 1));
 
@@ -731,19 +737,28 @@ function completeQuest(i, bonus = 0) {
 /* After-dinner debrief. Anyone left unrated wasn't at dinner, so their approval doesn't move. */
 // Pack items this dinner probably drew on: what Claude planned to use, plus anything in its recipe.
 // Planned items start at 1 used; recipe-only items at 0, since a bag of rice outlasts one dinner.
+// Pack items the recipe calls for, for the after-dinner "used up" counts. They start at 0:
+// only whole items that were finished come out of the Pack.
 function packUsage(q) {
-  const wanted = [...(q.uses || []), ...(q.recipe?.ingredients || []).map((g) => g.name)];
-  const rows = [];
-  for (const p of S.pack) {
-    if (p.leftover || !wanted.some((w) => sameItem(w, p.name))) continue;
-    const planned = (q.uses || []).some((w) => sameItem(w, p.name));
-    rows.push({ p, used: planned ? 1 : 0 });
-  }
-  return rows;
+  const wanted = q.recipe?.ingredients?.length ? q.recipe.ingredients.map((g) => g.name) : (q.uses || []);
+  return S.pack.filter((p) => !p.leftover && wanted.some((w) => sameItem(w, p.name))).map((p) => ({ p, used: 0 }));
 }
-function applyUsage(rows) {
-  for (const r of rows) r.p.qty -= r.used;
+// Takes the used-up counts out of the Pack and remembers them on the dinner, so they can be put back.
+function applyUsage(q, rows) {
+  const used = rows.filter((r) => r.used > 0);
+  for (const r of used) r.p.qty -= r.used;
   S.pack = S.pack.filter((p) => p.qty > 0);
+  if (used.length) q.used = [...(q.used || []), ...used.map((r) => ({ name: r.p.name, qty: r.used, spoil: r.p.spoil, rarity: r.p.rarity }))];
+}
+// Undoes one used-up entry on a cooked dinner.
+function putBack(q, k) {
+  const u = q.used?.[k];
+  if (!u) return;
+  const have = S.pack.find((p) => stackKey(p) === stackKey(u));
+  if (have) have.qty += u.qty;
+  else S.pack.push({ id: uid(), name: u.name, qty: u.qty, spoil: u.spoil || null, rarity: u.rarity || "common" });
+  q.used.splice(k, 1);
+  toast(`<span class="g">+${u.qty} ${esc(u.name)}</span> back in the Pack`);
 }
 
 function debrief(q) {
@@ -764,12 +779,12 @@ function debrief(q) {
     <div class="field"><span>Leftovers</span>
       <div class="seg" role="group" aria-label="Leftover portions">${[0, 1, 2, 3].map((n) => `<button class="seg-btn" data-left="${n}" aria-pressed="${n === leftovers}">${n === 0 ? "None" : n === 3 ? "3+" : n}</button>`).join("")}</div>
     </div>
-    ${usage.length ? `<div class="field" style="margin-top:14px"><span>Used up from your Pack</span>
+    ${usage.length ? `<div class="field" style="margin-top:14px"><span>Finished from your Pack</span>
       <div class="raters">${usage.map((u, k) => `
         <div class="rater"><span>${esc(u.p.name)} <small class="hint">of ${u.p.qty}</small></span>
           <div class="stepper"><button class="thumb" data-use="${k}" data-d="-1" aria-label="One fewer ${esc(u.p.name)}">−</button><b id="use-${k}">${u.used}</b><button class="thumb" data-use="${k}" data-d="1" aria-label="One more ${esc(u.p.name)}">+</button></div>
         </div>`).join("")}</div>
-      <small class="hint">Count whole items finished, like a tin or a bag. Leave it at 0 if there's still some left.</small>
+      <small class="hint">From the recipe. Count only what you finished: a whole block of cheese, a tin, or 2 of your 6 eggs. Leave it at 0 if some is left.</small>
     </div>` : ""}
     <div class="field" style="margin-top:14px"><span>Photo <small>(optional)</small></span>
       <div class="photo-pick"><img class="dish-thumb" id="db-photo" alt="" ${q.photo ? `data-photo="${q.photo}"` : ""} hidden><button class="btn" id="db-addphoto">${q.photo ? "Change photo" : "Add a photo"}</button></div>
@@ -799,10 +814,10 @@ function debrief(q) {
         showPhotos(root);
         root.querySelector("#db-addphoto").textContent = "Change photo";
       };
-      root.querySelector("#db-skip").onclick = () => { closeModal(); applyUsage(usage); render(); };
+      root.querySelector("#db-skip").onclick = () => { closeModal(); applyUsage(q, usage); render(); };
       root.querySelector("#db-save").onclick = () => {
         closeModal();
-        applyUsage(usage);
+        applyUsage(q, usage);
         recordDebrief(q, ratings, again, leftovers);
         render();
       };
@@ -1561,6 +1576,11 @@ function renderRecipe(q) {
           </button></li>`;
         }).join("")}</ul>
       </section>
+      ${q.used?.length ? `<section class="recipe-block">
+        <h3>Used up</h3>
+        <p class="hint">Taken out of your Pack after this dinner. Put back anything that wasn't finished.</p>
+        <div class="raters">${q.used.map((u, k) => `<div class="rater"><span>${esc(u.name)} <small class="hint">×${u.qty}</small></span><button class="btn" data-putback="${k}">Put back</button></div>`).join("")}</div>
+      </section>` : ""}
       <section class="recipe-block">
         <h3>Method</h3>
         <ol class="steps">${r.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ol>
@@ -1601,6 +1621,7 @@ function renderRecipe(q) {
   if (rewrite) rewrite.onclick = () => openRecipe(q.id, { rewrite: true });
   const photo = $("#rc-photo");
   if (photo) photo.onclick = async () => { if (await addPhoto(q)) renderRecipe(q); };
+  $("#recipe-body").querySelectorAll("[data-putback]").forEach((b) => b.onclick = () => { putBack(q, +b.dataset.putback); save(); renderRecipe(q); });
   const nophoto = $("#rc-nophoto");
   if (nophoto) nophoto.onclick = () => { setPhoto(q, null); save(); renderRecipe(q); };
   showPhotos($("#recipe-body"));
@@ -1779,6 +1800,10 @@ function viewPack() {
     <p class="eyebrow">Fridge, freezer &amp; larder</p>
     <h2 class="view-title">Pack</h2>
     <p class="lede">${S.pack.length} items carried. Red numbers are days until something spoils. Tap items to select them.</p>
+    <form class="add" id="packform">
+      <input id="packitem" placeholder="Add to the Pack (e.g. Tasty Cheese x2)" autocomplete="off" aria-label="Add an item to the Pack">
+      <button class="btn" type="submit">Add</button>
+    </form>
     ${S.pack.length ? `<div class="grid">${S.pack.map((p) => `
       <button class="slot ${picked.includes(p.id) ? "pick" : ""}" style="--rc:var(--r-${p.rarity})" data-pack="${p.id}" aria-pressed="${picked.includes(p.id)}" title="${esc(p.name)}">
         ${p.spoil && p.spoil <= 3 ? `<span class="spoil">${p.spoil}d</span>` : ""}
@@ -2013,6 +2038,18 @@ document.addEventListener("click", (e) => {
   if (d.eatleft) return eatLeftovers(+d.eatleft);
   if (t.id === "open-menu") { save(); renderMenu(); }
   if (t.id === "open-ledger") openLedger();
+});
+
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "packform") return;
+  e.preventDefault();
+  const v = $("#packitem").value.trim();
+  if (!v) return;
+  const { name, qty } = splitQty(v);
+  addToPack({ name: titleCase(name), qty, aisle: "Larder", price: 0, spoil: null });
+  toast(`<span class="g">+${qty} ${esc(titleCase(name))}</span> added to Pack`);
+  render();
+  $("#packitem").focus();
 });
 
 document.addEventListener("submit", (e) => {
