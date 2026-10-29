@@ -337,6 +337,9 @@ h2.view-title { font-family: var(--display); font-weight: 400; font-size: 27px; 
 .item.got .nm b { color: var(--muted); text-decoration: line-through; }
 .item .nm small { font-family: var(--ui); color: var(--muted); font-size: 12px; }
 .item .cost { font-family: var(--ui); font-variant-numeric: tabular-nums; color: var(--gold); font-size: 14px; }
+.item.inpack { opacity: .6; }
+.item.inpack .box { border-color: var(--moss); color: var(--moss); }
+.item.inpack .nm small { color: var(--moss); }
 .add { display: flex; gap: 8px; margin-bottom: 18px; }
 .tally { font-family: var(--ui); font-size: 14px; color: var(--muted); display: flex; justify-content: space-between; margin-bottom: 14px; }
 .tally b { color: var(--fg); font-variant-numeric: tabular-nums; }

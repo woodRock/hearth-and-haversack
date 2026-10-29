@@ -1,5 +1,5 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=10";
-import * as cloud from "./cloud.js?v=10";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=11";
+import * as cloud from "./cloud.js?v=11";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -586,7 +586,7 @@ function pickBark() {
   if (spoiling.length) {
     return { who: comps[0]?.name || S.party[0].name, line: `Something in the pack smells brave. The ${spoiling[0].name}, I think.`, kind: "spoil" };
   }
-  const left = S.supplies.filter((s) => !s.got).length;
+  const left = S.supplies.filter((s) => !s.got && !s.inCart).length;
   if (left > 2 && S.day <= 2) {
     return { who: comps[1]?.name || comps[0]?.name || S.party[0].name, line: `We still need ${left} supplies for this act. Who's doing the run?`, kind: "supplies" };
   }
@@ -609,7 +609,7 @@ function viewCamp() {
   const q = S.quests[S.day];
   const d = dateFor(S.day);
   const spoiling = S.pack.filter((p) => p.spoil && p.spoil <= 2).sort((a, b) => a.spoil - b.spoil);
-  const left = S.supplies.filter((s) => !s.got);
+  const left = S.supplies.filter((s) => !s.got && !s.inCart);
   const b = S.bark;
   const comp = S.party.find((m) => m.name === b?.who);
   return `<section class="panel">
@@ -991,7 +991,7 @@ async function startNextAct(plan) {
     return;
   }
   S.quests = S.quests.map((q) => ({ ...q, id: uid(), status: q.status === "out" ? "out" : "planned" }));
-  S.supplies = S.supplies.map((s) => ({ ...s, id: uid(), got: false }));
+  S.supplies = S.supplies.map((s) => ({ ...s, id: uid(), got: false, inCart: false }));
   await beginAct("Repeated last week's menu");
 }
 
@@ -1619,56 +1619,77 @@ function closeRecipe() {
 }
 
 /* Supplies */
+// The supply list is a shopping checklist: ticking only marks an item as in the trolley.
+// Items reach the Pack from a scanned receipt, which also records what they cost, or by hand.
 function viewSupplies() {
-  const got = S.supplies.filter((s) => s.got).length;
-  const total = S.supplies.reduce((a, s) => a + s.cost, 0);
+  const done = S.supplies.filter((s) => s.got || s.inCart).length;
+  const total = S.supplies.filter((s) => !s.got).reduce((a, s) => a + s.cost, 0);
   const aisles = AISLE_ORDER.filter((a) => S.supplies.some((s) => s.aisle === a));
+  const toPack = S.supplies.some((s) => !s.got);
   return `<section class="panel">
     <p class="eyebrow">For Act ${S.act}</p>
     <h2 class="view-title">Supply Run</h2>
-    <p class="lede">Built from this week's quests. Tap items as they go in the basket, or scan the receipt afterwards.</p>
+    <p class="lede">Your shopping list. Tick things off as they go in the trolley, then scan the receipt at home to fill your Pack.</p>
     <button class="scan" data-act="scan">
       <svg viewBox="0 0 24 24"><path d="M6 2h12v20l-3-2-3 2-3-2-3 2z"/><path d="M9 7h6M9 11h6M9 15h4"/></svg>
-      <span><b>Scan a receipt</b><small>${hasKey() ? "Take a photo and Claude adds everything to your Pack." : "Add your Claude API key in Settings to use this."}</small></span>
+      <span><b>Scan a receipt</b><small>${hasKey() ? "Take a photo and Claude adds what you bought to your Pack, with prices." : "Add your Claude API key in Settings to use this."}</small></span>
     </button>
-    <div class="tally"><span>Gathered <b>${got}/${S.supplies.length}</b></span><span>Estimated <b>${gold(total)}</b></span></div>
+    <div class="tally"><span>In the trolley <b>${done}/${S.supplies.length}</b></span><span>Estimated <b>${gold(total)}</b></span></div>
     <form class="add" id="addform">
-      <input id="additem" placeholder="Add a supply (e.g. Bread)" autocomplete="off" aria-label="Add a supply">
+      <input id="additem" placeholder="Add to the list (e.g. Bread)" autocomplete="off" aria-label="Add to the shopping list">
       <button class="btn" type="submit">Add</button>
     </form>
     ${aisles.length ? aisles.map((a) => {
-      const items = S.supplies.filter((s) => s.aisle === a);
-      const left = items.filter((s) => !s.got).length;
-      return `<div class="aisle"><h3><span>${esc(a)}</span><span>${left ? `${left} left` : "Cleared"}</span></h3>
-        <div class="list">${items.map((s) => `
-          <button class="item ${s.got ? "got" : ""}" data-sup="${s.id}" aria-pressed="${s.got}">
-            <span class="box">${s.got ? "✓" : ""}</span>
+      const items = S.supplies.filter((s) => s.aisle === a).sort((x, y) => x.got - y.got);
+      const left = items.filter((s) => !s.got && !s.inCart).length;
+      return `<div class="aisle"><h3><span>${esc(a)}</span><span>${left ? `${left} left` : "Done"}</span></h3>
+        <div class="list">${items.map((s) => s.got ? `
+          <div class="item inpack">
+            <span class="box">✓</span>
+            <span class="nm"><b>${esc(s.name)}</b><small>In your Pack</small></span>
+          </div>` : `
+          <button class="item ${s.inCart ? "got" : ""}" data-sup="${s.id}" aria-pressed="${!!s.inCart}">
+            <span class="box">${s.inCart ? "✓" : ""}</span>
             <span class="nm"><b>${esc(s.name)}</b><small>${s.for.length ? `For ${esc(s.for.join(", "))}` : "Your own addition"}</small></span>
             <span class="cost">${gold(s.cost)}</span>
           </button>`).join("")}</div></div>`;
     }).join("") : `<div class="empty">Nothing to buy this act.</div>`}
+    ${toPack ? `<button class="btn" data-act="handpack" style="margin-top:6px">No receipt? Add items to the Pack by hand</button>` : ""}
   </section>`;
 }
 
 function toggleSupply(id) {
   const s = S.supplies.find((x) => x.id === id);
-  if (!s) return;
-  s.got = !s.got;
-  if (s.got) {
-    S.spent += s.cost;
-    addLedger({ source: "list", store: "Ticked off the list", total: s.cost, items: [{ name: s.name, price: s.cost, aisle: s.aisle }], supplyId: s.id });
-    addToPack({ name: s.name, qty: 1, aisle: s.aisle, price: s.cost, spoil: null });
-    toast(`<span class="g">+1 ${esc(s.name)}</span> added to Pack`);
-    checkSuppliesCleared();
-  } else {
-    S.spent -= s.cost;
-    S.ledger = (S.ledger || []).filter((e) => e.supplyId !== s.id);
-    const p = S.pack.find((x) => sameItem(x.name, s.name) && !x.leftover);
-    if (p) { p.qty -= 1; S.pack = S.pack.filter((x) => x.qty > 0); }
-  }
+  if (!s || s.got) return;
+  s.inCart = !s.inCart;
+  checkSuppliesCleared();
+}
+
+// For shopping without a receipt to scan. Ticked items start selected. No spending is recorded.
+function addSuppliesByHand() {
+  const open = S.supplies.filter((s) => !s.got);
+  if (!open.length) return;
+  modal(`<div class="dialog left"><h3>Add to the Pack</h3><p>Choose what you bought. Ticked items are already selected. This doesn't record spending, so scan the receipt if you have it.</p>
+    <div class="loot">${open.map((s, i) => `<label><input type="checkbox" id="hp-${i}" ${s.inCart ? "checked" : ""}><span class="nm">${esc(s.name)}<small>${esc(s.aisle)}</small></span></label>`).join("")}</div>
+    <div class="row"><button class="btn" id="hp-x">Cancel</button><button class="btn primary" id="hp-ok">Add to Pack</button></div></div>`,
+    (root) => {
+      root.querySelector("#hp-x").onclick = closeModal;
+      root.querySelector("#hp-ok").onclick = () => {
+        const chosen = open.filter((_, i) => root.querySelector(`#hp-${i}`).checked);
+        closeModal();
+        if (!chosen.length) return;
+        for (const s of chosen) {
+          addToPack({ name: s.name, qty: 1, aisle: s.aisle, price: s.cost, spoil: null });
+          s.got = true;
+        }
+        logLine(`Put ${chosen.length} ${chosen.length === 1 ? "item" : "items"} from the list in the Pack.`);
+        toast(`<span class="g">+${chosen.length} ${chosen.length === 1 ? "item" : "items"}</span> added to Pack`);
+        render();
+      };
+    });
 }
 function checkSuppliesCleared() {
-  if (!S.suppliesBonus && S.supplies.length && S.supplies.every((x) => x.got)) {
+  if (!S.suppliesBonus && S.supplies.length && S.supplies.every((x) => x.got || x.inCart)) {
     S.suppliesBonus = true;
     setTimeout(() => { gainXP(50, "Supply run cleared"); render(); }, 600);
   }
@@ -1889,7 +1910,7 @@ function collectLoot(items, store) {
   addLedger({ source: "receipt", store: store || "Receipt", total: spent, items: items.map((it) => ({ name: it.name, price: Number(it.price) || 0, aisle: it.aisle })) });
   logLine(`Brought back ${items.length} items${store ? ` from ${store}` : ""} for ${gold(spent)}.`);
   toast(`<span class="g">+${items.length} items</span> added to Pack`);
-  if (ticked) setTimeout(() => toast(`Ticked off <span class="g">${ticked}</span> on the supply list`), 450);
+  if (ticked) setTimeout(() => toast(`<span class="g">${ticked}</span> from the supply list now in your Pack`), 450);
   gainXP(Math.min(40, 5 * items.length), "Loot collected");
   checkSuppliesCleared();
 }
@@ -1918,6 +1939,7 @@ document.addEventListener("click", (e) => {
   if (d.act === "scan") return scanReceipt();
   if (d.act === "brew") return brew();
   if (d.act === "eat") return eatPicked();
+  if (d.act === "handpack") return addSuppliesByHand();
   if (d.act === "unpick") { picked = []; return render(); }
   if (d.act === "book") return openBook();
   if (d.act === "replan") return startReplan();
@@ -1933,7 +1955,7 @@ document.addEventListener("submit", (e) => {
   const v = $("#additem").value.trim();
   if (!v) return;
   S.supplies.push({ id: uid(), aisle: "Added by you", name: v, cost: 2, for: [], got: false });
-  S.suppliesBonus = S.suppliesBonus && S.supplies.every((x) => x.got);
+  S.suppliesBonus = S.suppliesBonus && S.supplies.every((x) => x.got || x.inCart);
   toast(`<span class="g">${esc(v)}</span> added to the supply run`);
   render();
   $("#additem").focus();
