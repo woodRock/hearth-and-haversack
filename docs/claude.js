@@ -262,7 +262,7 @@ ${dislikes ? `Avoid where you can: ${dislikes}.` : ""}
 }
 
 // Phone photos are large; shrink to a size Claude reads well and uploads fast.
-export async function prepareImage(file, maxSide = 1600) {
+export async function prepareImage(file, maxSide = 1600, quality = 0.85) {
   let source;
   try {
     source = await createImageBitmap(file);
@@ -279,6 +279,6 @@ export async function prepareImage(file, maxSide = 1600) {
   canvas.width = Math.round(source.width * scale);
   canvas.height = Math.round(source.height * scale);
   canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
-  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+  const dataUrl = canvas.toDataURL("image/jpeg", quality);
   return { image: dataUrl.split(",")[1], mediaType: "image/jpeg" };
 }

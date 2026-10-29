@@ -1,5 +1,6 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=11";
-import * as cloud from "./cloud.js?v=11";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=12";
+import * as cloud from "./cloud.js?v=12";
+import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=12";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -770,6 +771,9 @@ function debrief(q) {
         </div>`).join("")}</div>
       <small class="hint">Count whole items finished, like a tin or a bag. Leave it at 0 if there's still some left.</small>
     </div>` : ""}
+    <div class="field" style="margin-top:14px"><span>Photo <small>(optional)</small></span>
+      <div class="photo-pick"><img class="dish-thumb" id="db-photo" alt="" ${q.photo ? `data-photo="${q.photo}"` : ""} hidden><button class="btn" id="db-addphoto">${q.photo ? "Change photo" : "Add a photo"}</button></div>
+    </div>
     <div class="row" style="margin-top:16px"><button class="btn" id="db-skip">Skip</button><button class="btn primary" id="db-save">Record it</button></div></div>`,
     (root) => {
       root.querySelectorAll("[data-rate]").forEach((b) => b.onclick = () => {
@@ -787,6 +791,14 @@ function debrief(q) {
         u.used = Math.min(u.p.qty, Math.max(0, u.used + +b.dataset.d));
         root.querySelector(`#use-${b.dataset.use}`).textContent = u.used;
       });
+      showPhotos(root);
+      root.querySelector("#db-addphoto").onclick = async () => {
+        if (!(await addPhoto(q))) return;
+        const img = root.querySelector("#db-photo");
+        img.dataset.photo = q.photo;
+        showPhotos(root);
+        root.querySelector("#db-addphoto").textContent = "Change photo";
+      };
       root.querySelector("#db-skip").onclick = () => { closeModal(); applyUsage(usage); render(); };
       root.querySelector("#db-save").onclick = () => {
         closeModal();
@@ -877,15 +889,59 @@ function eatLeftovers(i) {
 /* Recipe book: dinners worth making again, with their recipe when Claude has written one. */
 const bookKey = (name) => norm(name).replace(/\s+/g, " ");
 function bookEntry(name) { return (S.book || []).find((b) => bookKey(b.name) === bookKey(name)); }
+/* Dinner photos (optional) */
+// Opens the camera or photo library and resolves with the chosen file, or null.
+function pickPhotoFile() {
+  return new Promise((resolve) => {
+    const input = $("#photo-input");
+    input.value = "";
+    input.onchange = () => resolve(input.files?.[0] || null);
+    input.oncancel = () => resolve(null);
+    input.click();
+  });
+}
+
+// Lets the cook pick a photo for a dinner (a quest or a recipe-book dish). Resolves true if one was added.
+async function addPhoto(q) {
+  const file = await pickPhotoFile();
+  if (!file) return false;
+  let dataUrl;
+  try {
+    const { image, mediaType } = await prepareImage(file, 1000, 0.72);
+    dataUrl = `data:${mediaType};base64,${image}`;
+  } catch {
+    toast(`<span class="n">That photo couldn't be opened.</span>`);
+    return false;
+  }
+  const id = uid();
+  await putPhoto(id, dataUrl);
+  setPhoto(q, id);
+  save();
+  toast(`Photo added to <span class="g">${esc(q.name)}</span>`);
+  return true;
+}
+
+// Sets (or clears, with null) a dinner's photo, keeping its recipe-book entry in step.
+function setPhoto(q, id) {
+  const old = q.photo;
+  q.photo = id || undefined;
+  const entry = bookEntry(q.name);
+  if (entry && (entry.photo === old || !entry.photo || id)) entry.photo = id || undefined;
+  for (const x of S.quests) if (x !== q && x.name === q.name && x.photo === old) x.photo = id || undefined;
+  const used = [...S.quests, ...(S.book || [])].some((x) => x.photo === old);
+  if (old && !used) deletePhoto(old);
+}
+
 function addToBook(q) {
   S.book = S.book || [];
   const have = bookEntry(q.name);
   if (have) {
     have.cooked = (have.cooked || 0) + 1;
     if (q.recipe) have.recipe = q.recipe;
+    if (q.photo) have.photo = q.photo;
     return;
   }
-  S.book.push({ id: uid(), name: q.name, diff: q.diff, mins: q.mins, recipe: q.recipe || null, buy: q.buy || [], uses: q.uses || [], cooked: 1, added: `A${S.act}` });
+  S.book.push({ id: uid(), name: q.name, diff: q.diff, mins: q.mins, recipe: q.recipe || null, buy: q.buy || [], uses: q.uses || [], photo: q.photo, cooked: 1, added: `A${S.act}` });
   toast(`<span class="g">${esc(q.name)}</span> added to your recipe book`);
 }
 function removeFromBook(name, { quiet = false } = {}) {
@@ -1485,6 +1541,7 @@ function renderRecipe(q) {
     <button class="btn" id="rc-back">← ${inBook ? "Recipe book" : "Back"}</button>
     <p class="eyebrow">${inBook ? `Recipe book · cooked ${q.cooked || 1} ${q.cooked === 1 || !q.cooked ? "time" : "times"}` : tonight ? "Tonight's quest" : `${weekday(dateFor(i), "long")} · ${q.status === "done" ? "Complete" : q.status === "skipped" ? "Skipped" : "Planned"}`}</p>
     <h2 class="recipe-title">${esc(q.name)}</h2>
+    ${q.photo ? `<img class="dish-photo" data-photo="${q.photo}" alt="${esc(q.name)} as you cooked it" hidden>` : ""}
     <div class="q-meta">
       <span class="chip ${q.diff.toLowerCase()}">${q.diff}</span>
       <span class="chip">${r ? r.minutes : q.mins} min</span>
@@ -1518,6 +1575,8 @@ function renderRecipe(q) {
       ${tonight ? (q.newRecipe
         ? `<button class="btn primary" id="rc-cook">Roll d20 to attempt</button>`
         : `<button class="btn primary" id="rc-cook">Cooked it</button>`) : ""}
+      ${inBook || q.status === "done" ? `<button class="btn" id="rc-photo">${q.photo ? "Change photo" : "Add a photo"}</button>` : ""}
+      ${q.photo ? `<button class="btn" id="rc-nophoto">Remove photo</button>` : ""}
       ${hasKey() && r ? `<button class="btn" id="rc-rewrite">Write a different version</button>` : ""}
       ${saved ? `<button class="btn danger" id="rc-unbook">Remove from recipe book</button>` : `<button class="btn" id="rc-book">Save to recipe book</button>`}
     </div>`;
@@ -1540,6 +1599,11 @@ function renderRecipe(q) {
   };
   const rewrite = $("#rc-rewrite");
   if (rewrite) rewrite.onclick = () => openRecipe(q.id, { rewrite: true });
+  const photo = $("#rc-photo");
+  if (photo) photo.onclick = async () => { if (await addPhoto(q)) renderRecipe(q); };
+  const nophoto = $("#rc-nophoto");
+  if (nophoto) nophoto.onclick = () => { setPhoto(q, null); save(); renderRecipe(q); };
+  showPhotos($("#recipe-body"));
 }
 
 function openBook() {
@@ -1550,7 +1614,8 @@ function openBook() {
     <h2 class="recipe-title">Recipe Book</h2>
     <p class="lede">Dinners you've marked to make again. Pick them on the planning screen to put them back on the menu.</p>
     ${book.length ? `<div class="quests">${book.map((b) => `
-      <button class="quest book-entry" data-open="${b.id}">
+      <button class="quest book-entry ${b.photo ? "has-photo" : ""}" data-open="${b.id}">
+        ${b.photo ? `<img class="dish-thumb" data-photo="${b.photo}" alt="" hidden>` : ""}
         <div class="q-body">
           <p class="q-title">${esc(b.name)}</p>
           <div class="q-meta"><span class="chip ${b.diff.toLowerCase()}">${b.diff}</span><span class="chip">${b.mins} min</span><span class="chip">Cooked ${b.cooked || 1}×</span>${b.recipe ? "" : `<span class="chip">No recipe yet</span>`}</div>
@@ -1560,6 +1625,7 @@ function openBook() {
   show("recipe");
   $("#rc-back").onclick = closeRecipe;
   $("#recipe-body").querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openRecipe(b.dataset.open));
+  showPhotos($("#recipe-body"));
 }
 
 /* Ledger: where the gold went */

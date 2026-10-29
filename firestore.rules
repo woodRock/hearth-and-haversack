@@ -41,6 +41,20 @@ service cloud.firestore {
       allow delete: if isOwner();
     }
 
+    // Dinner photos, one per document: any household member can add, see or remove them.
+    match /campaigns/{id}/photos/{photo} {
+      function isMember() {
+        return request.auth != null
+          && request.auth.uid in get(/databases/$(database)/documents/campaigns/$(id)).data.members;
+      }
+      allow read, delete: if isMember();
+      allow create, update: if isMember()
+        && request.resource.data.keys().hasOnly(['data', 'by', 'at'])
+        && request.resource.data.by == request.auth.uid
+        && request.resource.data.data is string
+        && request.resource.data.data.size() < 900000;
+    }
+
     // Invite codes: anyone signed in can look up a code they were given, but not list them.
     match /invites/{code} {
       allow get: if request.auth != null;

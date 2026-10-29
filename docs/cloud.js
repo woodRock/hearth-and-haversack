@@ -8,7 +8,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, collection, getDoc, setDoc, updateDoc, onSnapshot, deleteField, arrayUnion, arrayRemove,
+  doc, collection, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, deleteField, arrayUnion, arrayRemove,
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 
 // Firebase web config is public by design; access is controlled by firestore.rules.
@@ -195,4 +195,20 @@ export async function leaveHousehold() {
 export async function removeMember(uid) {
   if (!user || !campaignId) return;
   await updateDoc(campaignRef(), { members: arrayRemove(uid), [`names.${uid}`]: deleteField() });
+}
+
+/* Dinner photos: one document each in campaigns/{id}/photos, so the campaign itself stays small. */
+const photoRef = (id) => doc(db, "campaigns", campaignId, "photos", id);
+export async function saveCloudPhoto(id, data) {
+  if (!user || !campaignId) return;
+  await setDoc(photoRef(id), { data, by: user.uid, at: Date.now() });
+}
+export async function loadCloudPhoto(id) {
+  if (!user || !campaignId) return null;
+  const snap = await getDoc(photoRef(id));
+  return snap.exists() ? snap.data().data : null;
+}
+export async function deleteCloudPhoto(id) {
+  if (!user || !campaignId) return;
+  await deleteDoc(photoRef(id));
 }
