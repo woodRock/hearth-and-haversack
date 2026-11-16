@@ -1,6 +1,6 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=14";
-import * as cloud from "./cloud.js?v=14";
-import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=14";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=15";
+import * as cloud from "./cloud.js?v=15";
+import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=15";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -1280,7 +1280,7 @@ function renderReview() {
       return `<article class="quest ${d.out ? "out" : ""}">
         <div class="day"><span>${weekday(date)}</span><b>${date.getDate()}</b></div>
         <div class="q-body">
-          ${d.out || d.leftovers ? `<p class="q-title">${d.out ? "Night off" : "Leftovers night"}</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button></div>` : `
+          ${d.out || d.leftovers ? `<p class="q-title">${d.out ? "Night off" : "Leftovers night"}</p><div class="row"><button class="btn" data-rv-cook="${i}">Cook this night</button><button class="btn" data-rv-swap="${i}">Swap night</button></div>` : `
           <p class="q-title">${esc(q?.name || "Cook's Choice")}</p>
           <div class="q-meta"><span class="chip ${(q?.diff || "Easy").toLowerCase()}">${q?.diff || "Easy"}</span><span class="chip">${q?.mins || 40} min</span>${q?.newRecipe ? `<span class="chip new">New recipe</span>` : ""}${keptQuest(d) ? `<span class="chip status">Unchanged</span>` : d.request ? `<span class="chip status">Your pick</span>` : ""}</div>
           <p class="q-approve">${needs.length ? `Needs: ${esc(needs.join(", "))}` : "Nothing to buy for this one yet."}</p>
@@ -1288,6 +1288,7 @@ function renderReview() {
             ${hasKey() ? `<button class="btn" data-rv-reroll="${i}">Something else</button>` : ""}
             <button class="btn" data-rv-edit="${i}">Choose my own</button>
             <button class="btn" data-rv-out="${i}">Night off</button>
+            <button class="btn" data-rv-swap="${i}">Swap night</button>
           </div>`}
         </div>
       </article>`;
@@ -1310,6 +1311,16 @@ function renderReview() {
   });
   $("#council-body").querySelectorAll("[data-rv-reroll]").forEach((b) => b.onclick = () => rerollDay(+b.dataset.rvReroll));
   $("#council-body").querySelectorAll("[data-rv-edit]").forEach((b) => b.onclick = () => chooseOwn(+b.dataset.rvEdit));
+  $("#council-body").querySelectorAll("[data-rv-swap]").forEach((b) => b.onclick = () => {
+    const i = +b.dataset.rvSwap;
+    const label = (k) => { const x = c.days[k]; return x.out ? "Night off" : x.leftovers ? "Leftovers night" : x.quest?.name || "Cook's Choice"; };
+    const targets = c.days.map((_, k) => k).filter((k) => k !== i && !c.days[k].locked);
+    if (!targets.length) return;
+    swapPicker(i, label(i), targets, label, (j) => {
+      [c.days[i], c.days[j]] = [c.days[j], c.days[i]];
+      save(); renderReview();
+    });
+  });
 }
 
 async function rerollDay(i, request = "") {
@@ -1438,6 +1449,7 @@ function viewQuests() {
         if (today && q.status === "planned") actions = tonightActions(q);
         else if (i > S.day && q.status === "planned" && q.kind === "leftovers") actions = `<button class="btn" data-totonight="${i}">Make it tonight</button>`;
         else if (i > S.day && q.status === "planned") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button><button class="btn" data-totonight="${i}">Make it tonight</button><button class="btn" data-rename="${i}">Change dish</button>`;
+        if (swappable(i) && swapTargets(i).length) actions += `<button class="btn" data-swap="${i}">Swap night</button>`;
         else if ((q.status === "done" || q.status === "skipped") && q.kind !== "leftovers") actions = `<button class="btn" data-recipe="${q.id}">Recipe</button>`;
         return `<article class="quest ${today ? "today" : ""} ${q.status}">
           <div class="day"><span>${weekday(d)}</span><b>${d.getDate()}</b></div>
@@ -1451,6 +1463,32 @@ function viewQuests() {
       }).join("")}
     </div>
   </section>`;
+}
+
+// Nights from tonight on that haven't been cooked yet can trade places. Supplies follow the dish, not the day.
+const swappable = (i) => i >= S.day && (S.quests[i]?.status === "planned" || S.quests[i]?.status === "out");
+const swapTargets = (i) => S.quests.map((_, k) => k).filter((k) => k !== i && swappable(k));
+const nightLabel = (q) => q.status === "out" ? "Night off" : q.name;
+
+// Shows the other nights and calls onPick with the one chosen.
+function swapPicker(i, from, targets, label, onPick) {
+  modal(`<div class="dialog left"><h3>Swap ${weekday(dateFor(i), "long")}</h3>
+    <p>Trade <b>${esc(from)}</b> with another night.</p>
+    <div class="swap-list">${targets.map((k) => `<button type="button" class="btn" data-swap-to="${k}"><span>${weekday(dateFor(k))} ${dateFor(k).getDate()}</span><b>${esc(label(k))}</b></button>`).join("")}</div>
+    <div class="row" style="margin-top:14px"><button type="button" class="btn" id="sw-x">Cancel</button></div></div>`,
+    (root) => {
+      root.querySelector("#sw-x").onclick = closeModal;
+      root.querySelectorAll("[data-swap-to]").forEach((b) => b.onclick = () => { closeModal(); onPick(+b.dataset.swapTo); });
+    });
+}
+
+function swapNights(i) {
+  swapPicker(i, nightLabel(S.quests[i]), swapTargets(i), (k) => nightLabel(S.quests[k]), (j) => {
+    [S.quests[i], S.quests[j]] = [S.quests[j], S.quests[i]];
+    logLine(`Swapped ${weekday(dateFor(i), "long")} and ${weekday(dateFor(j), "long")}.`);
+    toast(`<span class="g">${esc(nightLabel(S.quests[j]))}</span> moved to ${weekday(dateFor(j), "long")}`);
+    render();
+  });
 }
 
 function renameQuest(i) {
@@ -2047,6 +2085,7 @@ document.addEventListener("click", (e) => {
     return render();
   }
   if (d.rename) return renameQuest(+d.rename);
+  if (d.swap) return swapNights(+d.swap);
   if (d.recipe) return openRecipe(d.recipe);
   if (d.sup) { toggleSupply(d.sup); return render(); }
   if (d.pack) return togglePick(d.pack);
