@@ -460,3 +460,7 @@ nav.tabs button[aria-selected="true"] { color: var(--gold); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+.swap-list { display: flex; flex-direction: column; gap: 8px; }
+.swap-list .btn { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; text-align: left; }
+.swap-list .btn span { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.swap-list .btn b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
