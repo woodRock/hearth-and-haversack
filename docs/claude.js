@@ -190,7 +190,7 @@ export function planDays({ days, party, pack, perks, recent, notes, budget, hist
   const partyText = party
     .map((m) => `- ${m.name}${m.likes ? `, likes ${m.likes}` : ""}${m.dislikes ? `, dislikes ${m.dislikes}` : ""}`)
     .join("\n");
-  const packText = pack.map((p) => `- ${p.name} x${p.qty}${p.spoil ? ` (spoils in ${p.spoil} days)` : ""}`).join("\n");
+  const packText = pack.map((p) => `- ${p.name} x${p.qty}${p.frozen ? " (frozen, needs thawing)" : p.spoil ? ` (spoils in ${p.spoil} days)` : ""}`).join("\n");
   const dayText = days
     .map((d, i) => `${i + 1}. ${d.label}: ${d.request ? `they've chosen "${d.request}"` : "your choice"}${d.busy ? " (busy night, 30 minutes or less)" : ""}${d.saved?.length ? `. Their saved recipe uses: ${d.saved.join(", ")}` : ""}`)
     .join("\n");

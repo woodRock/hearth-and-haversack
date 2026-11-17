@@ -1,6 +1,6 @@
-import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=15";
-import * as cloud from "./cloud.js?v=15";
-import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=15";
+import { readReceipt, planDays, writeRecipe, prepareImage, hasKey, getKey, setKey, ClaudeError } from "./claude.js?v=16";
+import * as cloud from "./cloud.js?v=16";
+import { putPhoto, deletePhoto, showPhotos } from "./photos.js?v=16";
 
 const SAVE_KEY = "hh-save-v1";
 const XP_PER_LEVEL = 200;
@@ -69,7 +69,12 @@ function splitQty(text) {
 }
 
 // Pack items stack when they're the same thing: same name ignoring case and plurals.
-const stackKey = (p) => (p.leftover ? "leftover:" : "") + norm(p.name).replace(/\s+/g, " ");
+// Frozen items stack apart from fresh ones, since only the fresh ones count down to spoiling.
+const stackKey = (p) => (p.frozen ? "frozen:" : "") + (p.leftover ? "leftover:" : "") + norm(p.name).replace(/\s+/g, " ");
+// Days until an item spoils, or null if it keeps (shelf-stable or in the freezer).
+const spoilsIn = (p) => (p.frozen ? null : p.spoil || null);
+// Thawed food doesn't last long, so it gets at most this many days back.
+const THAWED_DAYS = 2;
 
 // Splits amounts out of item names and merges duplicates into one stack.
 // Returns true if anything changed, so callers know to save the repair.
@@ -589,7 +594,7 @@ function pickBark() {
     const who = tonight.no[0];
     return { who, line: `${tonight.name}? You know how I feel about that.`, kind: "dislike" };
   }
-  const spoiling = S.pack.filter((p) => p.spoil && p.spoil <= 1);
+  const spoiling = S.pack.filter((p) => spoilsIn(p) && p.spoil <= 1);
   if (spoiling.length) {
     return { who: comps[0]?.name || S.party[0].name, line: `Something in the pack smells brave. The ${spoiling[0].name}, I think.`, kind: "spoil" };
   }
@@ -615,7 +620,7 @@ function barkReplies(b) {
 function viewCamp() {
   const q = S.quests[S.day];
   const d = dateFor(S.day);
-  const spoiling = S.pack.filter((p) => p.spoil && p.spoil <= 2).sort((a, b) => a.spoil - b.spoil);
+  const spoiling = S.pack.filter((p) => spoilsIn(p) && p.spoil <= 2).sort((a, b) => a.spoil - b.spoil);
   const left = S.supplies.filter((s) => !s.got && !s.inCart);
   const b = S.bark;
   const comp = S.party.find((m) => m.name === b?.who);
@@ -748,7 +753,7 @@ function applyUsage(q, rows) {
   const used = rows.filter((r) => r.used > 0);
   for (const r of used) r.p.qty -= r.used;
   S.pack = S.pack.filter((p) => p.qty > 0);
-  if (used.length) q.used = [...(q.used || []), ...used.map((r) => ({ name: r.p.name, qty: r.used, spoil: r.p.spoil, rarity: r.p.rarity }))];
+  if (used.length) q.used = [...(q.used || []), ...used.map((r) => ({ name: r.p.name, qty: r.used, spoil: r.p.spoil, rarity: r.p.rarity, frozen: r.p.frozen || undefined, leftover: r.p.leftover || undefined }))];
 }
 // Undoes one used-up entry on a cooked dinner.
 function putBack(q, k) {
@@ -756,7 +761,7 @@ function putBack(q, k) {
   if (!u) return;
   const have = S.pack.find((p) => stackKey(p) === stackKey(u));
   if (have) have.qty += u.qty;
-  else S.pack.push({ id: uid(), name: u.name, qty: u.qty, spoil: u.spoil || null, rarity: u.rarity || "common" });
+  else S.pack.push({ id: uid(), name: u.name, qty: u.qty, spoil: u.spoil || null, rarity: u.rarity || "common", ...(u.frozen ? { frozen: true } : {}), ...(u.leftover ? { leftover: true } : {}) });
   q.used.splice(k, 1);
   toast(`<span class="g">+${u.qty} ${esc(u.name)}</span> back in the Pack`);
 }
@@ -889,7 +894,7 @@ function eatLeftovers(i) {
   };
   if (!left.length) { finish([]); return; }
   modal(`<div class="dialog left"><h3>What did you eat?</h3><p>Each one takes a portion out of the Pack.</p>
-    <div class="loot">${left.map((p, k) => `<label><input type="checkbox" id="el-${k}" checked><span class="nm">${esc(p.name.replace(/^Leftover /, ""))}<small>${p.qty} ${p.qty === 1 ? "portion" : "portions"} · spoils in ${p.spoil}d</small></span></label>`).join("")}</div>
+    <div class="loot">${left.map((p, k) => `<label><input type="checkbox" id="el-${k}" checked><span class="nm">${esc(p.name.replace(/^Leftover /, ""))}<small>${p.qty} ${p.qty === 1 ? "portion" : "portions"}${p.frozen ? " · frozen" : ` · spoils in ${p.spoil}d`}</small></span></label>`).join("")}</div>
     <div class="row"><button class="btn" id="el-x">Cancel</button><button class="btn primary" id="el-ok">Done</button></div></div>`,
     (root) => {
       root.querySelector("#el-x").onclick = closeModal;
@@ -1001,11 +1006,11 @@ async function longRest() {
   await loading({ title: "Long Rest", sub: "The party settles in by the fire…", min: 2000 });
   const spoiled = [];
   for (const p of S.pack) {
-    if (p.spoil == null) continue;
+    if (spoilsIn(p) == null) continue;
     p.spoil -= 1;
     if (p.spoil <= 0) spoiled.push(p.name);
   }
-  S.pack = S.pack.filter((p) => p.spoil == null || p.spoil > 0);
+  S.pack = S.pack.filter((p) => spoilsIn(p) == null || p.spoil > 0);
   S.stats.wasted += spoiled.length;
   if (spoiled.length) logLine(`Lost to spoilage: ${spoiled.join(", ")}.`);
   S.day += 1;
@@ -1228,7 +1233,7 @@ function addKitchenToPack(c) {
 function planContext() {
   return {
     party: S.party.map(({ name, likes, dislikes }) => ({ name, likes, dislikes })),
-    pack: S.pack.map(({ name, qty, spoil }) => ({ name, qty, spoil })),
+    pack: S.pack.map((p) => ({ name: p.name, qty: p.qty, spoil: spoilsIn(p), frozen: !!p.frozen })),
     perks: S.perks, recent: S.recent, notes: S.council?.notes || "", budget: S.budget,
     history: (S.history || []).slice(0, 15),
     favourites: (S.book || []).map((b) => b.name),
@@ -1833,18 +1838,20 @@ function addToPack({ name, qty, aisle, price, spoil }) {
 
 /* Pack */
 function viewPack() {
-  const leftovers = S.pack.filter((p) => p.leftover || (p.spoil && p.spoil <= 2));
+  const leftovers = S.pack.filter((p) => !p.frozen && (p.leftover || (p.spoil && p.spoil <= 2)));
+  const sel = picked.map((id) => S.pack.find((p) => p.id === id)).filter(Boolean);
+  const allFrozen = sel.length && sel.every((p) => p.frozen);
   return `<section class="panel">
     <p class="eyebrow">Fridge, freezer &amp; larder</p>
     <h2 class="view-title">Pack</h2>
-    <p class="lede">${S.pack.length} items carried. Red numbers are days until something spoils. Tap items to select them.</p>
+    <p class="lede">${S.pack.length} items carried. Red numbers are days until something spoils; frozen items don't spoil. Tap items to select them.</p>
     <form class="add" id="packform">
       <input id="packitem" placeholder="Add to the Pack (e.g. Tasty Cheese x2)" autocomplete="off" aria-label="Add an item to the Pack">
       <button class="btn" type="submit">Add</button>
     </form>
     ${S.pack.length ? `<div class="grid">${S.pack.map((p) => `
-      <button class="slot ${picked.includes(p.id) ? "pick" : ""}" style="--rc:var(--r-${p.rarity})" data-pack="${p.id}" aria-pressed="${picked.includes(p.id)}" title="${esc(p.name)}">
-        ${p.spoil && p.spoil <= 3 ? `<span class="spoil">${p.spoil}d</span>` : ""}
+      <button class="slot ${picked.includes(p.id) ? "pick" : ""} ${p.frozen ? "frozen" : ""}" style="--rc:var(--r-${p.rarity})" data-pack="${p.id}" aria-pressed="${picked.includes(p.id)}" title="${esc(p.name)}">
+        ${p.frozen ? `<span class="ice" aria-label="Frozen">FROZEN</span>` : spoilsIn(p) && p.spoil <= 3 ? `<span class="spoil">${p.spoil}d</span>` : ""}
         ${p.leftover ? `<span class="lo">LEFT</span>` : ""}
         <span class="glyph">${esc(p.name.replace(/^Leftover /, "")[0])}</span>
         <span class="lbl">${esc(p.name)}</span>
@@ -1864,6 +1871,7 @@ function viewPack() {
     ${picked.length ? `<div class="pick-bar" role="toolbar" aria-label="Selected items">
       <span>${picked.length} selected</span>
       <button class="btn" data-act="unpick">Clear</button>
+      <button class="btn" data-act="${allFrozen ? "thaw" : "freeze"}">${allFrozen ? "Thaw" : "Freeze"}</button>
       ${picked.length >= 2 ? `<button class="btn" data-act="brew">Combine</button>` : ""}
       <button class="btn primary" data-act="eat">Mark as eaten</button>
     </div>` : ""}
@@ -1874,6 +1882,23 @@ function togglePick(id) {
   const p = S.pack.find((x) => x.id === id);
   if (!p) return;
   picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id];
+  render();
+}
+
+// Moves the selected items into or out of the freezer, joining any stack already there.
+function setFrozen(frozen) {
+  const items = picked.map((id) => S.pack.find((p) => p.id === id)).filter((p) => p && !!p.frozen !== frozen);
+  for (const p of items) {
+    if (frozen) p.frozen = true;
+    else { delete p.frozen; if (p.spoil) p.spoil = Math.min(p.spoil, THAWED_DAYS); }
+  }
+  tidyPack(S);
+  picked = [];
+  if (items.length) {
+    const names = items.map((p) => esc(p.name)).join(", ");
+    toast(frozen ? `<span class="g">${names}</span> in the freezer. ${items.length > 1 ? "They" : "It"} won't spoil there.` : `<span class="g">${names}</span> thawed. Use within ${THAWED_DAYS} days.`);
+    logLine(`${frozen ? "Froze" : "Thawed"} ${items.map((p) => p.name).join(", ")}.`);
+  }
   render();
 }
 
@@ -2097,6 +2122,8 @@ document.addEventListener("click", (e) => {
   if (d.act === "handpack") return addSuppliesByHand();
   if (d.member) return editTastes(+d.member);
   if (d.act === "unpick") { picked = []; return render(); }
+  if (d.act === "freeze") return setFrozen(true);
+  if (d.act === "thaw") return setFrozen(false);
   if (d.act === "book") return openBook();
   if (d.act === "replan") return startReplan();
   if (d.act === "addleft") return addLeftoversByHand();
